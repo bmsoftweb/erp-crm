@@ -651,6 +651,8 @@ class Execucao {
   private enviadas = 0;
   /** A jornada passou a conversa para a equipe (Departamento, IA sem ligação em "humano"): não é o fim do atendimento */
   private paraHumano = false;
+  /** Primeira mensagem de uma rodada nova: o primeiro menu tenta entender a escolha nela antes de se mandar */
+  abertura = '';
 
   constructor(
     private ctx: Contexto,
@@ -705,14 +707,20 @@ class Execucao {
     return (no.dados.opcoes ?? []).map((o: any, i: number) => ({ numero: i + 1, departamento_id: i + 1, nome: o.rotulo, bot: false, id: o.id }));
   }
 
+  /** Opção do menu que o texto escolhe: pelo número/nome, ou pela IA */
+  private async escolhaMenu(no: No, entrada: string): Promise<{ id: string } | null> {
+    if (!entrada) return null;
+    const opcoes = this.opcoesMenu(no);
+    const escolha = escolhaDoTexto(entrada, opcoes) ?? (temChave(this.bot) ? await escolhaPelaIa(this.bot!, entrada, opcoes).catch(async (e) => (await this.falha(no, e.message), null)) : null);
+    return escolha as { id: string } | null;
+  }
+
   /** O cliente respondeu no nó em que a conversa parou: devolve o próximo nó (null = continua parada ali) */
   async responder(no: No, entrada: string): Promise<No | null | 'fim'> {
     switch (no.tipo) {
       case 'menu': {
-        const opcoes = this.opcoesMenu(no);
-        let escolha = entrada ? escolhaDoTexto(entrada, opcoes) : null;
-        if (!escolha && entrada && temChave(this.bot)) escolha = await escolhaPelaIa(this.bot, entrada, opcoes).catch(async (e) => (await this.falha(no, e.message), null));
-        if (escolha) return this.destino(no, (escolha as any).id) ?? 'fim';
+        const escolha = await this.escolhaMenu(no, entrada);
+        if (escolha) return this.destino(no, escolha.id) ?? 'fim';
         const invalida = this.destino(no, 'invalida');
         // "Inválida" voltando para o próprio menu: repete com o aviso de que não entendeu
         if (invalida && invalida.id !== no.id) return invalida;
@@ -938,9 +946,17 @@ class Execucao {
           await this.enviarImagem(no);
           no = seguir();
           break;
-        case 'menu':
+        case 'menu': {
+          // A conversa já começou respondendo ("quero duas águas"): segue pela opção sem mandar o menu
+          const escolha = await this.escolhaMenu(no, this.abertura);
+          this.abertura = '';
+          if (escolha) {
+            no = seguir(escolha.id);
+            break;
+          }
           await this.menu(no);
           return;
+        }
         case 'pergunta':
           await this.enviar(preencher(d.texto, await this.vars()));
           return;
@@ -1181,6 +1197,7 @@ export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot:
       if (recomeca || !atual) {
         // Sem ponto na jornada, ou depois do Fim (ou de uma saída sem ligação): recomeça do Início
         estado.retomar = 'limpar';
+        exec.abertura = entrada;
         await exec.percorrer(inicio);
       } else if (audio && !entrada) {
         // Áudio que não deu para ouvir (sem a chave do Gemini, falha): pede por escrito e continua esperando no mesmo nó
@@ -1300,7 +1317,7 @@ const FORMATO_NOS = `Tipos de nó (campo "dados" de cada um) e as saídas (campo
 - inicio: {}. Saída "proximo". Exatamente um; nenhuma ligação chega nele.
 - mensagem: {texto}. Envia o texto e segue. Saída "proximo".
 - imagem: {arquivo_id, arquivo_nome, url, legenda}. Imagem enviada (arquivo_id) ou link https (url). Saída "proximo". Mantenha arquivo_id dos nós que já existem; nó novo só com url https.
-- menu: {texto, opcoes:[{id, rotulo}], invalida}. 1 a 9 opções numeradas; espera a resposta. Saídas: o id de cada opção e "invalida" (não entendeu).
+- menu: {texto, opcoes:[{id, rotulo}], invalida}. 1 a 9 opções numeradas; espera a resposta (se a 1ª mensagem da conversa já indica a opção, segue direto sem mandar o menu). Saídas: o id de cada opção e "invalida" (não entendeu).
 - pergunta: {texto, variavel}. Pergunta e guarda a resposta em {{variavel}} (letras, números e _). Saída "proximo".
 - condicao: {tipo:"horario"|"cadastrado"|"negocio"|"variavel", dias:[0-6, 0=domingo], das:"HH:MM", ate:"HH:MM", variavel, operador, valor}. horario = dentro do horário de atendimento; cadastrado = cliente já cadastrado; negocio = tem negócio aberto; variavel = compara {{variavel}} com valor. Saídas "sim" e "nao".
 - case: {variavel, casos:[{id, operador, valor, rotulo}]}. 1 a 20 casos; o primeiro que bater decide. Saídas: o id de cada caso e "nenhum".

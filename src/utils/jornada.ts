@@ -46,7 +46,7 @@ export const TIPOS_NO: Record<TipoNo, { nome: string; icone: LucideIcon; cor: st
   inicio: { nome: 'Início', icone: Play, cor: 'emerald', ajuda: 'Primeira mensagem do cliente (ou conversa que recomeçou).' },
   mensagem: { nome: 'Mensagem', icone: MessageSquare, cor: 'blue', ajuda: 'Envia um texto e segue.' },
   imagem: { nome: 'Enviar imagem', icone: Image, cor: 'blue', ajuda: 'Envia uma imagem (enviada aqui ou por link) com legenda.' },
-  menu: { nome: 'Menu', icone: ListOrdered, cor: 'violet', ajuda: 'Opções numeradas; cada opção segue para um nó. Espera a resposta.' },
+  menu: { nome: 'Menu', icone: ListOrdered, cor: 'violet', ajuda: 'Opções numeradas; cada opção segue para um nó. Espera a resposta. Se a conversa já começou dizendo o que quer (ex.: "quero duas águas"), segue direto pela opção, sem mandar o menu.' },
   pergunta: { nome: 'Pergunta', icone: HelpCircle, cor: 'violet', ajuda: 'Pergunta e guarda a resposta numa variável. Espera a resposta.' },
   condicao: { nome: 'Condição', icone: GitBranch, cor: 'amber', ajuda: 'Horário, cliente cadastrado, negócio aberto ou variável: sim ou não.' },
   case: { nome: 'Condição múltipla', icone: GitFork, cor: 'amber', ajuda: 'Compara uma variável com vários casos; o primeiro que bater decide a saída.' },

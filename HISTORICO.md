@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.212 — 2026-11-18
+
+- Automação: conversa que já começa dizendo o que quer (texto ou áudio, ex.: "quero duas águas") segue direto pela opção do primeiro menu, sem mandar o menu; saudações continuam recebendo o menu.
+
 ## 0.0.211 — 2026-11-18
 
 - Automação (Registrar pedido): o resumo termina com "Posso encerrar o pedido ou você quer acrescentar mais itens?"; "pode encerrar", "só isso" e "não" (não quer mais nada) confirmam o pedido.
