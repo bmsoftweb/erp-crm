@@ -26,7 +26,7 @@ assert.match(resumo, /Total: R\$ 48,90/);
 assert.match(resumo, /Sobre "refri" \(2\), qual destes\?\n1\) COCA 2L — R\$ 12,00\n2\) GUARANA 2L — R\$ 9,50/);
 assert.match(resumo, /Não encontrei: abacaxi voador\./);
 assert.match(resumo, /Me diga como você prefere/);
-assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [] }), /Responda "sim" para confirmar/);
+assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [] }), /Posso encerrar o pedido ou você quer acrescentar mais itens\?/);
 // Sem estoque: saldo parcial com similares, ou zerado; sugestões só aparecem sem pendência
 const agua = { produto_id: 57, nome: 'AGUA 500ML', quantidade: 30, preco_unitario: 2 };
 const semEstoque = resumoPedido({
@@ -42,11 +42,11 @@ assert.doesNotMatch(semEstoque, /Aproveite também/);
 // Sem estoque e sem troca não espera escolha: com outros itens, confirma o resto; sozinho, oferece pedir outra coisa
 const tora = { item: { ...agua, nome: 'TORA EUCALIPTO', quantidade: 1 }, disponivel: 0, opcoes: [] };
 assert.strictEqual(pedidoPendente({ duvidas: [], semEstoque: [tora] }), false);
-assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [tora] }), /Não tenho outro parecido agora\.\n\nEstá certo\? Responda "sim"/);
+assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [tora] }), /Não tenho outro parecido agora\.\n\nPosso encerrar o pedido/);
 assert.match(resumoPedido({ itens: [], duvidas: [], faltou: [], semEstoque: [tora] }), /TORA EUCALIPTO está sem estoque\. Não tenho outro parecido agora\.\n\nQuer pedir outra coisa\?$/);
 const comSugestao = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [], sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }] });
 assert.match(comSugestao, /Aproveite também:\n1\) OLEO 900ML — R\$ 8,50/);
-assert.match(comSugestao, /ou o que incluir dos sugeridos/);
+assert.match(comSugestao, /pode ser dos sugeridos/);
 const comPedido = prepararJornada({ ...base, nos: [inicio, { id: 'pd', tipo: 'pedido', x: 0, y: 0, dados: { status: 'faturado' } }], ligacoes: [{ de: 'inicio', saida: 'proximo', para: 'pd' }] }, null);
 assert.strictEqual(comPedido.nos[1].dados.status, 'aguardando_aprovacao');
 

@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.211 — 2026-11-18
+
+- Automação (Registrar pedido): o resumo termina com "Posso encerrar o pedido ou você quer acrescentar mais itens?"; "pode encerrar", "só isso" e "não" (não quer mais nada) confirmam o pedido.
+
 ## 0.0.210 — 2026-11-18
 
 - Automação: o menu entende o cliente que já pede o produto em vez de digitar o número ("2 agua" vai para "Comprar um produto"; número junto do produto é quantidade).

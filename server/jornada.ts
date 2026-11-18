@@ -101,7 +101,7 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
       ? 'Me diga como você prefere (e se quer mudar mais alguma coisa).'
       : !p.itens.length
         ? 'Quer pedir outra coisa?'
-        : `Está certo? Responda "sim" para confirmar, ou me diga o que mudar${p.sugestoes?.length ? ' (ou o que incluir dos sugeridos)' : ''}.`,
+        : `Posso encerrar o pedido ou você quer acrescentar mais itens${p.sugestoes?.length ? ' (pode ser dos sugeridos)' : ''}?`,
   );
   return partes.join('\n\n');
 }

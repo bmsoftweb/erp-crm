@@ -717,7 +717,9 @@ Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"t
 - opcoes: quando o pedido serve para mais de um produto do cadastro e o cliente não disse qual (ex.: "cerveja" com várias
   cervejas no cadastro, "café" com café solúvel e torrado), produto_id null e de 2 a 6 ids possíveis. Não escolha pelo cliente. Sem produto parecido no cadastro: o item entra mesmo assim, com produto_id null e opcoes [] (o cliente fica sabendo que não tem).
 - situacao: "confirmou" se a ÚLTIMA mensagem do cliente aceita o último resumo do pedido mandado pela empresa, sem pedir
-  mudança (ex.: "sim", "pode mandar", "confirmo"); "cancelou" se ele desiste do pedido; senão "pedindo".
+  mudança (ex.: "sim", "pode mandar", "confirmo", "pode encerrar", "pode fechar", "só isso", "é isso"). A empresa pergunta
+  se pode encerrar ou se ele quer acrescentar mais itens: "não" (não quer mais nada) também é "confirmou", não "cancelou".
+  "cancelou" só se ele desiste do pedido; senão "pedindo".
 - Se a empresa avisou que um produto está sem estoque (ou só tem parte) e o cliente escolheu um dos oferecidos no lugar,
   use o escolhido; se ele aceitou a quantidade que tem, use essa quantidade; se não quis mais, tire o item.
 - Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = 1).
