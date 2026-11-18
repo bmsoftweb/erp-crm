@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { head, put } from '@vercel/blob';
 import { pool } from './db.js';
 import { lerConfig } from './config.js';
 import { cifrar, decifrar, textoConfig } from './segredo.js';
@@ -758,6 +759,33 @@ export function citadaDe(d: any): string | null {
   return typeof id === 'string' && id ? id.slice(0, 100) : null;
 }
 
+// A Evolution não guarda as mensagens (banco dela desligado), e sem isso não acha o arquivo só pelo código.
+// O CRM guarda, cifrada no Blob, a mensagem de cada mídia como veio no aviso (key + message, poucos KB: o
+// arquivo continua no WhatsApp) e entrega ela inteira à Evolution na hora de baixar
+const MIDIAS = ['imagem', 'figurinha', 'audio', 'video', 'documento'];
+const caminhoMidia = (empresaId: string | number, waId: string) => `erp-crm/whatsapp-midia/${empresaId}/${encodeURIComponent(waId)}.txt`;
+
+async function guardarMidia(empresaId: number, key: any, message: any): Promise<void> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return;
+  const { base64: _arquivo, ...msg } = message ?? {}; // arquivo inteiro (opção "base64" do aviso) não precisa
+  await put(caminhoMidia(empresaId, key.id), cifrar(JSON.stringify({ key, message: msg })), {
+    access: 'public', // conteúdo cifrado
+    contentType: 'text/plain',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+  });
+}
+
+async function midiaGuardada(empresaId: string | number, waId: string): Promise<any> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
+  try {
+    const r = await fetch((await head(caminhoMidia(empresaId, waId))).url, { signal: AbortSignal.timeout(15_000) });
+    return r.ok ? JSON.parse(decifrar(await r.text(), 'WhatsApp')) : null;
+  } catch {
+    return null; // mídia de antes de guardar, ou Blob fora: tenta só pelo código
+  }
+}
+
 async function gravarMensagem(empresaId: number, d: any): Promise<MensagemNova | null> {
   const key = d?.key ?? {};
   // Com o endereçamento novo (LID), o número vem no remoteJidAlt/senderPn
@@ -798,7 +826,10 @@ async function gravarMensagem(empresaId: number, d: any): Promise<MensagemNova |
       ts,
     ],
   );
-  // affectedRows 1 = linha nova (2/0 = aviso repetido de uma que já estava gravada)
+  // affectedRows 1 = linha nova, 2 = enviada pelo CRM que voltou no aviso, 0 = aviso repetido
+  if (r.affectedRows > 0 && MIDIAS.includes(c.tipo)) {
+    await guardarMidia(empresaId, key, d.message).catch((err) => console.error(`WhatsApp: mídia ${key.id} não guardada: ${err.message}`));
+  }
   if (!(recebida && r.affectedRows === 1)) return null;
   return { empresaId, telefone, id: r.insertId, ...(c.tipo === 'audio' && { midia: { key, message: d.message } }) };
 }
@@ -1009,6 +1040,7 @@ export async function midiaDaMensagem(empresaId: string | number, waId: string, 
   // A mídia fica na instância que enviou ou recebeu: a informada (ex.: campanha) ou a do número da conversa
   const c = conta ? await credenciaisDaConta(empresaId, conta) : telefone ? await credenciaisPara(empresaId, telefone) : await credenciais(empresaId);
   if (c.provedor !== 'evolution') throw new Error('Imagens das mensagens só pela Evolution.');
+  bruta ??= await midiaGuardada(empresaId, waId);
   const { url, headers } = endereco(c, { zapi: '', evolution: 'chat/getBase64FromMediaMessage' });
   const r: any = await (
     await requisitar(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ message: bruta?.message ? bruta : { key: { id: waId } }, convertToMp4: false }) })

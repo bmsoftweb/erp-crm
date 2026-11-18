@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.205 — 2026-11-18
+
+- Conversas: o player de áudio (e imagens, figurinhas, vídeos e documentos) volta a abrir. Como a Evolution não guarda mais as mensagens, o CRM guarda no Blob, cifrada, a mensagem de cada mídia que chega no aviso e entrega ela inteira à Evolution na hora de baixar. Mídias recebidas antes desta versão continuam sem abrir.
+
 ## 0.0.204 — 2026-11-18
 
 - Automação: o áudio do cliente é baixado com a mensagem completa que chega no aviso da Evolution (não depende mais de a Evolution ter guardado a mensagem), e a transcrição funciona.
