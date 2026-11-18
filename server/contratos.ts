@@ -196,12 +196,19 @@ function mesmoValor(a: unknown, b: unknown) {
  * (os campos fora de LIVRES_NO_ASSINADO), itens e exclusão. A rotina de renovação não passa
  * por aqui: ela aplica a cláusula de renovação do próprio contrato.
  */
-export async function conferirTrava(recurso: string, acao: 'incluir' | 'alterar' | 'excluir', id: string | null, payload: Record<string, any> | null) {
+export async function conferirTrava(
+  recurso: string,
+  acao: 'incluir' | 'alterar' | 'excluir',
+  id: string | null,
+  payload: Record<string, any> | null,
+  empresaId: string,
+) {
+  // Registro de outra empresa: nada a conferir aqui (a gravação, que filtra a empresa, responde "não encontrado")
   if (recurso === 'contratos' && id && acao !== 'incluir') {
-    if (!travado(await situacaoTrava(id))) return;
+    const [r] = await pool.query<any[]>('SELECT * FROM crm_contratos WHERE id = ? AND empresa_id = ?', [id, empresaId]);
+    if (!r.length || !travado(await situacaoTrava(id))) return;
     if (acao === 'excluir') throw new Error('Contrato assinado não pode ser excluído. Para encerrá-lo, mude a situação para Encerrado ou Cancelado.');
-    const [r] = await pool.query<any[]>('SELECT * FROM crm_contratos WHERE id = ?', [id]);
-    const atual = r[0] ?? {};
+    const atual = r[0];
     const campos = getResource('contratos')?.fields ?? [];
     const mudou = Object.keys(payload ?? {}).filter((k) => !LIVRES_NO_ASSINADO.has(k) && k in atual && !mesmoValor(atual[k], payload![k]));
     if (mudou.length) {
@@ -210,13 +217,14 @@ export async function conferirTrava(recurso: string, acao: 'incluir' | 'alterar'
   }
   // Campanha já iniciada (disparos saindo): não é excluída e só a situação muda (pausar, cancelar, concluir); o resto é descartado
   if (recurso === 'campanhas' && id && acao !== 'incluir') {
-    const [r] = await pool.query<any[]>('SELECT iniciada_em FROM crm_campanhas WHERE id = ?', [id]);
+    const [r] = await pool.query<any[]>('SELECT iniciada_em FROM crm_campanhas WHERE id = ? AND empresa_id = ?', [id, empresaId]);
     if (r[0]?.iniciada_em && acao === 'excluir') throw new Error('Campanha iniciada não pode ser excluída. Para encerrá-la, mude a situação para Cancelada ou Concluída.');
     if (r[0]?.iniciada_em && payload) for (const k of Object.keys(payload)) if (k !== 'situacao') delete payload[k];
   }
   if (recurso === 'contrato_itens') {
-    const contratos = new Set([payload?.contrato_id, id ? await contratoDoItem(id) : null].filter(Boolean).map(String));
-    for (const c of contratos) if (travado(await situacaoTrava(c))) throw new Error(ERRO_TRAVA);
+    const ids = [...new Set([payload?.contrato_id, id ? await contratoDoItem(id) : null].filter(Boolean).map(String))];
+    const [daEmpresa] = ids.length ? await pool.query<any[]>('SELECT id FROM crm_contratos WHERE id IN (?) AND empresa_id = ?', [ids, empresaId]) : [[]];
+    for (const c of daEmpresa) if (travado(await situacaoTrava(c.id))) throw new Error(ERRO_TRAVA);
   }
 }
 

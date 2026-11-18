@@ -55,7 +55,7 @@ export const COLUNAS_FORA = /(senha|token|hash|_cifrad|base64|dados|arquivo|assi
 
 /** Palavras que não podem aparecer no SQL da IA (escrita, administração, leitura de arquivos, espera) */
 const PROIBIDAS =
-  /\b(insert|update|delete|replace|drop|alter|create|truncate|rename|grant|revoke|call|handler|lock|unlock|load_file|outfile|dumpfile|sleep|benchmark|get_lock|release_lock|set|use|show|describe|explain|information_schema|performance_schema|mysql|sys|for\s+update|lock\s+in\s+share)\b/i;
+  /\b(insert|update|delete|replace|drop|alter|create|truncate|rename|grant|revoke|call|handler|lock|unlock|load_file|outfile|dumpfile|sleep|benchmark|get_lock|release_lock|set|use|show|describe|explain|information_schema|performance_schema|mysql|sys|extractvalue|updatexml|for\s+update|lock\s+in\s+share)\b/i;
 
 export const MAX_PESSOAS_IA = 50_000;
 export const TEMPO_MS = 15_000;
@@ -109,6 +109,25 @@ export function sqlExecutadoIa(sqlIa: string, empresaId: string | number): strin
   return `SELECT /*+ MAX_EXECUTION_TIME(${TEMPO_MS}) */ DISTINCT p.id FROM (${sql}) x JOIN ${PESSOAS} p ON p.id = x.id AND p.grupo_id = ${GRUPO(emp)} LIMIT ${MAX_PESSOAS_IA}`;
 }
 
+/**
+ * Nomes das tabelas de verdade (deste banco) e dos bancos do servidor: não podem sobrar no SQL da IA depois da troca
+ * pelas tabelas da empresa, seja qual for a sintaxe (vírgula, parênteses, subconsulta). Carregado antes de usar
+ * isolarEmpresa (prepararIsolamento); sem a lista, isolarEmpresa recusa tudo
+ */
+let NOMES_REAIS: RegExp | null = null;
+
+export function definirNomesReais(nomes: string[]) {
+  const lista = [...new Set(nomes.map((n) => n.toLowerCase()))].filter((n) => !TABELAS_IA.includes(n) && /^[a-z0-9_$]+$/.test(n));
+  NOMES_REAIS = lista.length ? new RegExp(`(?<![\\w$])(${lista.sort((a, b) => b.length - a.length).join('|')})(?![\\w$])`, 'i') : /(?!)/;
+}
+
+export async function prepararIsolamento() {
+  if (NOMES_REAIS) return;
+  const [t] = await pool.query<any[]>('SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()');
+  const [b] = await pool.query<any[]>('SELECT SCHEMA_NAME AS n FROM information_schema.SCHEMATA');
+  definirNomesReais([...t, ...b].map((r) => String(r.n)));
+}
+
 /** Palavras que não podem ser apelido de tabela (vêm logo depois do nome dela) */
 const NAO_APELIDO = new Set([
   'where', 'join', 'left', 'right', 'inner', 'outer', 'cross', 'natural', 'straight_join', 'on', 'using', 'group', 'order',
@@ -146,11 +165,17 @@ export function isolarEmpresa(sql: string, empresaId: string | number, colunas?:
   if (new RegExp(`,\\s*\`?(${nomes.join('|')})\`?(?![\\w.\`(])`, 'i').test(s)) {
     throw new Error('Ligue as tabelas com JOIN, não com vírgula.');
   }
+  // Tabela de verdade (ou outro banco) que escapou da troca: vírgula, parênteses...
+  if (!NOMES_REAIS) throw new Error('A lista de tabelas do banco ainda não foi carregada.');
+  if (NOMES_REAIS.test(s.replace(/\u0002\d+\u0002/g, ''))) {
+    throw new Error(`Use só as tabelas do CRM (${TABELAS_IA.join(', ')}), sem nome de banco na frente.`);
+  }
   return s.replace(/\u0002(\d+)\u0002/g, (_m, i) => subconsultas[Number(i)]).replace(/\u0001(\d+)\u0001/g, (_m, i) => textos[Number(i)]);
 }
 
 
 export async function idsDaSelecaoIa(sqlIa: string, empresaId: string | number): Promise<number[]> {
+  await prepararIsolamento();
   const sql = sqlExecutadoIa(sqlIa, empresaId);
   const conn = await pool.getConnection();
   try {

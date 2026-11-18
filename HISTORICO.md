@@ -2,6 +2,12 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.208 — 2026-11-18
+
+- Segurança (isolamento entre empresas): o SQL da seleção de campanha e das Consultas com IA é recusado se sobrar qualquer tabela de verdade ou nome de banco depois da troca pelas tabelas da empresa (vírgula, parênteses, outro banco); `extractvalue` e `updatexml` bloqueados.
+- Segurança: a trava de contrato assinado e de campanha iniciada só confere registros da empresa logada (antes respondia diferente para ids de outra empresa).
+- Segurança: a rota pública `/api/db/status` só diz se o banco responde (não mostra mais servidor, usuário, banco nem contagem de linhas).
+
 ## 0.0.207 — 2026-11-18
 
 - Pessoas isoladas pelo grupo de empresas da filial (coluna nova `cad_pessoas.grupo_id`): telas de Pessoas, Contatos e Endereços, busca das Conversas, dono do número no WhatsApp, público das campanhas (critérios e seleção com IA), Consultas com IA, prospecção, proposta e pedido. Pessoa nova (tela, lead convertido, importação de arquivo) grava o grupo da filial; na importação, quem já existe em outro grupo não é alterado (fica em ignorados).

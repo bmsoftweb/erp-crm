@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from './db.js';
 import { exigirAcesso } from './permissoes.js';
-import { camposDe, COLUNAS_FORA, conferirSqlIa, estrutura, isolarEmpresa, TABELAS_IA, TEMPO_MS, type ColunasPorTabela } from './selecaoIa.js';
+import { camposDe, COLUNAS_FORA, conferirSqlIa, estrutura, isolarEmpresa, prepararIsolamento, TABELAS_IA, TEMPO_MS, type ColunasPorTabela } from './selecaoIa.js';
 
 /**
  * Marketing › Consultas: um chat em que o usuário pergunta em português ("quantos clientes eu tenho em Rio do Sul?") e
@@ -42,6 +42,7 @@ export interface ResultadoConsulta {
 
 /** Roda o SELECT da IA isolado na empresa: transação somente leitura, limite de tempo e de linhas */
 export async function executarConsulta(sqlIa: string, empresaId: string | number): Promise<ResultadoConsulta & { sqlExecutado: string }> {
+  await prepararIsolamento();
   const sql = isolarEmpresa(conferirSqlIa(sqlIa, false), empresaId, await colunasLiberadas());
   const sqlExecutado = `SELECT /*+ MAX_EXECUTION_TIME(${TEMPO_MS}) */ * FROM (${sql}) resultado LIMIT ${MAX_LINHAS + 1}`;
   const conn = await pool.getConnection();

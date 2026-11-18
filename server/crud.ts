@@ -465,7 +465,7 @@ export function createCrudRouter() {
       validateRequired(resource, payload, false);
       await validarVinculos(resource, payload, empresaId);
       await antesDeGravar(resource.name, payload, empresaId);
-      await conferirTrava(resource.name, 'incluir', null, payload);
+      await conferirTrava(resource.name, 'incluir', null, payload, empresaId);
       // Atividade incluída para outro usuário: quem incluiu fica como envolvido (acompanha o que pediu)
       const eu = Number(res.locals.usuarioId);
       const corpo =
@@ -522,7 +522,7 @@ export function createCrudRouter() {
       validateRequired(resource, payload, true);
       await validarVinculos(resource, payload, empresaId);
       await antesDeGravar(resource.name, payload, empresaId);
-      await conferirTrava(resource.name, 'alterar', req.params.id, payload);
+      await conferirTrava(resource.name, 'alterar', req.params.id, payload, empresaId);
       const filhos = await filhosDoCorpo(resource, req.body, empresaId);
 
       // Usuário: dados em sys_usuarios (servem a todos os módulos) e o perfil do CRM na filial em crm_usuarios
@@ -592,7 +592,7 @@ export function createCrudRouter() {
         return res.status(403).json({ error: `Não é permitido excluir registros em ${resource.label}.` });
       }
 
-      await conferirTrava(resource.name, 'excluir', req.params.id, null);
+      await conferirTrava(resource.name, 'excluir', req.params.id, null, empresaDa(res));
       if (resource.name === 'atividades') await conferirDonoAtividade(req.params.id, res);
       const afetados = await antesDeExcluir(resource.name, req.params.id);
       // Item de contrato: o contrato precisa ser recalculado depois que o item sair

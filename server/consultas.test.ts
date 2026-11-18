@@ -1,6 +1,20 @@
 import assert from 'node:assert';
 import { conferirGrafico, preencherResposta } from './consultas.js';
-import { isolarEmpresa, sqlExecutadoIa } from './selecaoIa.js';
+import { definirNomesReais, isolarEmpresa, sqlExecutadoIa } from './selecaoIa.js';
+
+// Tabelas de verdade e bancos (no app vêm do information_schema): não podem sobrar no SQL depois da troca
+definirNomesReais(['crm_negocios', 'crm_pedido_itens', 'cad_pessoas', 'sys_usuarios', 'bmerp_000000', 'information_schema']);
+for (const sql of [
+  'SELECT p.id FROM pessoas p, crm_pedido_itens i WHERE p.empresa_id = 7',
+  'SELECT p.id FROM pessoas p JOIN (crm_pedido_itens) i ON 1 = 1',
+  'SELECT p.id FROM pessoas p, sys_usuarios u',
+  'SELECT p.id FROM pessoas p WHERE EXISTS (SELECT 1 FROM (cad_pessoas) x)',
+  'SELECT p.id FROM pessoas p, bmerp_000000.cad_pessoas x',
+]) {
+  assert.throws(() => isolarEmpresa(sql, 7), /tabelas do CRM/, sql);
+}
+// Nome de tabela dentro de um texto não conta
+assert.ok(isolarEmpresa("SELECT p.id FROM pessoas p WHERE p.nome = 'crm_pedido_itens'", 7).includes("'crm_pedido_itens'"));
 
 // Cada tabela do FROM/JOIN vira só as linhas da filial e as colunas liberadas, mantendo o apelido
 const COLS = { pessoas: ['id', 'nome', 'cidade'], funis: ['id', 'nome'], etapas: ['id', 'funil_id', 'nome'], negocios: ['id', 'pessoa_id'] };

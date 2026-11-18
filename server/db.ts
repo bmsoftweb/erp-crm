@@ -31,62 +31,14 @@ pool.pool.on('connection', (conn: any) => {
   conn.query("SET time_zone = '-03:00', SESSION group_concat_max_len = 4194304");
 });
 
-export const DB_TABLES = [
-  'sys_empresas',
-  'sys_usuarios',
-  'cad_pessoas',
-  'cad_produtos',
-  'crm_funis',
-  'crm_etapas',
-  'crm_negocios',
-  'crm_atividades',
-  'crm_historico_interacoes',
-  'crm_propostas',
-  'crm_proposta_itens',
-  'crm_pedidos',
-  'crm_pedido_itens',
-];
-
+/** Rota pública /api/db/status: só diz se o banco responde (sem servidor, usuário, banco nem contagens) */
 export async function checkDbHealth() {
   const startTime = Date.now();
   try {
-    const conn = await pool.getConnection();
-    const [verResult] = await conn.query<any[]>('SELECT VERSION() as version, DATABASE() as db');
-    const latency = Date.now() - startTime;
-
-    const counts: Record<string, number> = {};
-    for (const t of DB_TABLES) {
-      try {
-        const [res] = await conn.query<any[]>(`SELECT COUNT(*) as cnt FROM ${t}`);
-        counts[t] = res[0]?.cnt ?? 0;
-      } catch {
-        counts[t] = 0;
-      }
-    }
-
-    conn.release();
-
-    return {
-      connected: true,
-      latencyMs: latency,
-      version: verResult[0]?.version || 'MySQL 8.0',
-      database: verResult[0]?.db || dbConfig.database,
-      host: dbConfig.host,
-      port: dbConfig.port,
-      user: dbConfig.user,
-      tableCounts: counts,
-    };
+    await pool.query('SELECT 1');
+    return { connected: true, latencyMs: Date.now() - startTime };
   } catch (err: any) {
-    return {
-      connected: false,
-      latencyMs: Date.now() - startTime,
-      error: err.message || 'Falha de conexão com MySQL',
-      code: err.code || 'UNKNOWN',
-      host: dbConfig.host,
-      port: dbConfig.port,
-      user: dbConfig.user,
-      database: dbConfig.database,
-      tableCounts: {},
-    };
+    console.error(`MySQL: ${err.message}`);
+    return { connected: false, latencyMs: Date.now() - startTime };
   }
 }
