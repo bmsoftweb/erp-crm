@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Jost é a família padrão do painel (carregada em index.html).
+   Redefinir --font-sans faz o Tailwind aplicá-la em todo o app,
+   inclusive nas classes utilitárias font-sans. */
+@theme {
+  --font-sans: "Jost", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Altura compartilhada pelo topo da sidebar e pelo header da área de
+     trabalho, para que a borda inferior dos dois fique na mesma linha. */
+  --altura-topo: 4.375rem; /* 70px */
+}
+
+:root.dark {
+  color-scheme: dark;
+}
+
+html, body {
+  min-height: 100%;
+  font-family: var(--font-sans);
+}
+
+/* ==========================================
+   CAMPOS DE ENTRADA (padrão visual global — mesmo do bm-estoque)
+   ==========================================
+   Moldura de 1px com cantos arredondados; barra de 2px à esquerda: verde = opcional,
+   âmbar = obrigatório (atributo HTML required). Foco só escurece o fundo, sem anel.
+   .campo-botao = botão que faz papel de campo (ex.: abre um modal de escolha).
+   Ficam de fora caixas de seleção, opções, cor, arquivo, deslizante e botões. */
+:where(input, select, textarea):where(:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"])),
+:where(.campo-botao) {
+  border: 1px solid rgba(120, 113, 108, 0.35) !important;
+  border-left-width: 2px !important;
+  border-left-color: #10b981 !important; /* emerald-500 — campo opcional */
+  border-radius: 0.375rem !important;
+}
+
+:where(input, select, textarea):where(:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"])):where(:required) {
+  border-left-color: #eab308 !important; /* yellow-500 — campo obrigatório */
+}
+
+.dark input:where(:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"])),
+.dark select:where(:not([type="hidden"])),
+.dark textarea:where(:not([type="hidden"])) {
+  border: 1px solid rgba(120, 113, 108, 0.35) !important;
+  border-left-width: 2px !important;
+  border-left-color: #10b981 !important;
+  border-radius: 0.375rem !important;
+}
+
+.dark input:where(:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"])):where(:required),
+.dark select:where(:not([type="hidden"])):where(:required),
+.dark textarea:where(:not([type="hidden"])):where(:required) {
+  border-left-color: #eab308 !important;
+}
+
+/* Campo em foco: nenhuma moldura/anel, só o fundo um pouco mais escuro (camada translúcida
+   por cima, funciona sobre qualquer fundo). O box-shadow zerado remove os anéis "focus:ring-*". */
+:where(input, select, textarea):where(:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="hidden"])):focus {
+  outline: none !important;
+  box-shadow: none !important;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.06)) !important;
+}
+
+/* Lista aberta do select com a mesma moldura arredondada (select customizável: Chrome/Edge 135+;
+   os outros navegadores ignoram e mostram a lista nativa) */
+@supports (appearance: base-select) {
+  select:not([multiple]),
+  select:not([multiple])::picker(select) {
+    appearance: base-select;
+  }
+  /* Texto e seta centralizados na altura, mesmo com classe "flex" no select (que zera o center padrão) */
+  select:not([multiple]) {
+    align-items: center;
+  }
+  select:not([multiple])::picker(select) {
+    border: 1px solid rgba(120, 113, 108, 0.35);
+    border-radius: 0.375rem;
+    margin-top: 2px;
+    padding: 4px 0;
+    background: #fff;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+  }
+  .dark select:not([multiple])::picker(select) {
+    background: #1c1917;
+  }
+  select:not([multiple]) option {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+  }
+  select:not([multiple]) option::checkmark {
+    display: none;
+  }
+  /* Seta do campo: chevron fino cinza no lugar do triângulo preto; gira quando a lista abre */
+  select:not([multiple])::picker-icon {
+    content: '';
+    width: 0.875rem;
+    height: 0.875rem;
+    background-color: #a8a29e; /* stone-400 */
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat center / contain;
+    transition: rotate 0.15s;
+  }
+  select:not([multiple]):open::picker-icon {
+    rotate: 180deg;
+  }
+  select:not([multiple]) option:hover,
+  select:not([multiple]) option:focus-visible {
+    background: #eff6ff;
+    outline: none;
+  }
+  select:not([multiple]) option:checked {
+    background: #2563eb;
+    color: #fff;
+  }
+  .dark select:not([multiple]) option:hover,
+  .dark select:not([multiple]) option:focus-visible {
+    background: rgba(23, 37, 84, 0.6);
+  }
+}
+
+/* Exceção: formulário do suporte pelo site (SuportePublico), em caixa arredondada com borda,
+   como o "Agendar Apresentação" da homepage. Mais específico que as regras acima */
+.campo-site:is(input, select, textarea) {
+  border: 1px solid #e7e5e4 !important; /* stone-200 */
+  border-radius: 0.75rem !important;
+}
+.campo-site:is(input, select, textarea):focus {
+  border-color: #3b82f6 !important; /* blue-500 */
+  background-image: none !important;
+  background-color: #eff6ff !important; /* blue-50 */
+}
+
+/* Tamanho dos campos escolhido em "Customizar layout" do formulário */
+@media (min-width: 64rem) {
+  .campo-span {
+    grid-column: span var(--span) / span var(--span);
+  }
+}
+.campo-altura :is(input:not([type='file']), select, textarea) {
+  height: var(--altura);
+}
+
+/* Editor do contrato padrão (Configurações): mesma aparência do PDF gerado (server/contratos.ts) */
+.editor-contrato h1 { font-size: 15pt; font-weight: 700; margin: 0 0 10px; }
+.editor-contrato h2 { font-size: 13pt; font-weight: 700; margin: 14px 0 6px; }
+.editor-contrato h3 { font-size: 11.5pt; font-weight: 700; margin: 10px 0 4px; }
+.editor-contrato p { margin: 0 0 8px; }
+.editor-contrato ul { list-style: disc; padding-left: 24px; margin: 0 0 8px; }
+.editor-contrato ol { list-style: decimal; padding-left: 24px; margin: 0 0 8px; }
+.editor-contrato table { border-collapse: collapse; }
+
+/* Cutucão do técnico no chat do site (SuportePublico) */
+@keyframes tremer {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+.animate-tremer { animation: tremer 0.45s ease-in-out 2; }
+
+/* Gráficos (Painel de Suporte): paleta categórica validada para daltonismo, na ordem fixa dos slots
+   (claro e escuro são passos próprios de cada modo, não uma inversão). Status: só com ícone + texto. */
+.viz {
+  --serie-1: #2a78d6;
+  --serie-2: #eb6834;
+  --serie-3: #1baf7a;
+  --serie-4: #eda100;
+  --status-bom: #006300;
+  --status-ruim: #d03b3b;
+  --grade: #e1e0d9;
+}
+.dark .viz {
+  --serie-1: #3987e5;
+  --serie-2: #d95926;
+  --serie-3: #199e70;
+  --serie-4: #c98500;
+  --status-bom: #0ca30c;
+  --status-ruim: #e66767;
+  --grade: #2c2c2a;
+}

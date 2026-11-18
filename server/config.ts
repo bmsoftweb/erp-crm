@@ -1,0 +1,227 @@
+import { Router, Request, Response } from 'express';
+import { pool } from './db.js';
+import { configSmtpPublica, prepararConfigSmtp, testarSmtp } from './email.js';
+import { conferirInstanciaUnica, configWhatsPublica, contaWhats, prepararConfigWhats, testarWhatsApp, conectarWhatsApp, desconectarWhatsApp, ativarRecebimento } from './whatsapp.js';
+import { automaticasPublica, prepararAutomaticas } from './automaticas.js';
+import { chatbotPublica, prepararChatbot, testarChatbot } from './chatbot.js';
+import { jornadaPublica, prepararJornada } from './jornada.js';
+import { exigirAcesso } from './permissoes.js';
+import { pesquisaPublica, prepararPesquisa } from './pesquisa.js';
+import { cadastrarWebhookCofre, configD4Publica, prepararConfigD4, verificarConta } from './d4sign.js';
+import { configProspeccaoPublica, prepararConfigProspeccao } from './prospeccao.js';
+
+/**
+ * Configurações da empresa (tabela config).
+ *
+ * Cada linha é `empresa_id + grupo + chave = valor`, com o valor em JSON. A tela de
+ * Configurações tem uma aba por grupo: "pessoas" (campos_personalizados), "email" (smtp),
+ * "whatsapp" (provedor), "vendas" (retorno_envio), "assinatura" (d4sign), "prospeccao" (google) e "contratos" (modelo). Senhas e tokens são gravados cifrados e nunca voltam para o
+ * navegador (server/email.ts, server/whatsapp.ts).
+ */
+
+/** Grupos e chaves aceitos: o que não está aqui não entra no banco */
+const CHAVES: Record<string, string[]> = {
+  pessoas: ['campos_personalizados'],
+  // smtp = conta comercial (propostas, pedidos, contratos, campanhas); smtp_suporte = conta do suporte (pesquisa de satisfação, chamados)
+  email: ['smtp', 'smtp_suporte'],
+  // campanhas: outro número só para as campanhas (mesma estrutura da provedor)
+  // jornada_campanhas: a Automação de quem responde no WhatsApp das campanhas (mesma estrutura da jornada)
+  whatsapp: ['provedor', 'campanhas', 'automaticas', 'chatbot', 'jornada', 'jornada_campanhas', 'pesquisa'],
+  // { ativo: boolean } — tarefa "Retorno Envio" ao enviar proposta ou pedido (sem configuração: ligado)
+  vendas: ['retorno_envio', 'privacidade_envio'],
+  assinatura: ['d4sign'],
+  // Chave da Google Places API usada na tela Prospecção
+  prospeccao: ['google'],
+};
+
+/**
+ * Configurações que passam por tratamento ao gravar e ao devolver à tela: segredos (gravados
+ * cifrados, devolvidos sem o segredo).
+ */
+const COM_SEGREDO: Record<string, { preparar: (valor: any, anterior: any) => any; publica: (valor: any) => any }> = {
+  'email.smtp': { preparar: prepararConfigSmtp, publica: configSmtpPublica },
+  'email.smtp_suporte': { preparar: prepararConfigSmtp, publica: configSmtpPublica },
+  'whatsapp.provedor': { preparar: prepararConfigWhats, publica: configWhatsPublica },
+  'whatsapp.campanhas': { preparar: prepararConfigWhats, publica: configWhatsPublica },
+  'whatsapp.automaticas': { preparar: prepararAutomaticas, publica: automaticasPublica },
+  'whatsapp.chatbot': { preparar: prepararChatbot, publica: chatbotPublica },
+  // Funções chamadas na hora (jornada.ts importa este módulo)
+  'whatsapp.jornada': { preparar: (v, a) => prepararJornada(v, a), publica: (v) => jornadaPublica(v) },
+  'whatsapp.jornada_campanhas': { preparar: (v, a) => prepararJornada(v, a), publica: (v) => jornadaPublica(v) },
+  'whatsapp.pesquisa': { preparar: (v) => prepararPesquisa(v), publica: (v) => pesquisaPublica(v) },
+  'assinatura.d4sign': { preparar: prepararConfigD4, publica: configD4Publica },
+  // Funções chamadas na hora (prospeccao.ts importa este módulo)
+  'prospeccao.google': { preparar: (v, a) => prepararConfigProspeccao(v, a), publica: (v) => configProspeccaoPublica(v) },
+};
+export const somenteAdmin = (res: Response) => {
+  if (res.locals.usuario?.tipo !== 'admin') {
+    throw Object.assign(new Error('Somente administradores alteram as configurações.'), { status: 403 });
+  }
+};
+
+const TAMANHO_MAX = 1_000_000;
+
+function validar(grupo: string, chave: string) {
+  if (!CHAVES[grupo]?.includes(chave)) {
+    throw Object.assign(new Error(`Configuração desconhecida: ${grupo}.${chave}`), { status: 404 });
+  }
+}
+
+/** Lê o valor gravado, ou null quando a empresa ainda não configurou nada */
+export async function lerConfig(empresaId: string, grupo: string, chave: string): Promise<any> {
+  const [rows] = await pool.query<any[]>(
+    'SELECT valor FROM crm_config WHERE empresa_id = ? AND grupo = ? AND chave = ? LIMIT 1',
+    [empresaId, grupo, chave],
+  );
+  if (!rows.length || rows[0].valor === null) return null;
+  try {
+    return JSON.parse(rows[0].valor);
+  } catch {
+    return null; // conteúdo inválido no banco não derruba a tela
+  }
+}
+
+export function createConfigRouter(): Router {
+  const router = Router();
+
+  router.get('/config/:grupo/:chave', async (req: Request, res: Response) => {
+    try {
+      const { grupo, chave } = req.params;
+      // Configurações: só administrador. Os campos personalizados de Pessoas são lidos pelo cadastro de
+      // Pessoas de qualquer usuário
+      if (!(grupo === 'pessoas' && chave === 'campos_personalizados')) exigirAcesso(res, 'configuracoes', 'as Configurações');
+      validar(grupo, chave);
+      const valor = await lerConfig(String(res.locals.empresaId), grupo, chave);
+      const segredo = COM_SEGREDO[`${grupo}.${chave}`];
+      const publico = segredo ? segredo.publica(valor) : valor;
+      // Nó IA sem texto-base próprio: mostra o texto-base antigo do Chatbot, que é o que ele usa
+      // (ao salvar a automação, o texto passa a ficar no nó)
+      if (grupo === 'whatsapp' && chave === 'jornada') {
+        const antigo = String((await lerConfig(String(res.locals.empresaId), 'whatsapp', 'chatbot'))?.texto_base ?? '').trim();
+        if (antigo) publico.nos = publico.nos.map((n: any) => (n.tipo === 'ia' && !String(n.dados?.texto ?? '').trim() ? { ...n, dados: { ...n.dados, texto: antigo } } : n));
+      }
+      res.json({ grupo, chave, valor: publico });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  // Só administradores mexem nas configurações da empresa
+  router.put('/config/:grupo/:chave', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      const { grupo, chave } = req.params;
+      validar(grupo, chave);
+      const empresaId = String(res.locals.empresaId);
+      const segredo = COM_SEGREDO[`${grupo}.${chave}`];
+      const valor = segredo ? segredo.preparar(req.body?.valor, await lerConfig(empresaId, grupo, chave)) : req.body?.valor;
+      if (grupo === 'whatsapp' && (chave === 'provedor' || chave === 'campanhas')) await conferirInstanciaUnica(empresaId, valor, contaWhats(chave));
+      const texto = JSON.stringify(valor ?? null);
+      if (texto.length > TAMANHO_MAX) {
+        return res.status(413).json({ error: 'Configuração grande demais.' });
+      }
+
+      const [existe] = await pool.query<any[]>(
+        'SELECT id FROM crm_config WHERE empresa_id = ? AND grupo = ? AND chave = ? LIMIT 1',
+        [empresaId, grupo, chave],
+      );
+      if (existe.length) {
+        await pool.query('UPDATE crm_config SET valor = ? WHERE id = ?', [texto, existe[0].id]);
+      } else {
+        await pool.query('INSERT INTO crm_config (empresa_id, grupo, chave, valor) VALUES (?, ?, ?, ?)', [
+          empresaId,
+          grupo,
+          chave,
+          texto,
+        ]);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Conecta e autentica no SMTP gravado (conta comercial ou do suporte), sem enviar e-mail */
+  router.post('/config/email/:chave/testar', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      await testarSmtp(String(res.locals.empresaId), req.params.chave === 'smtp_suporte' ? 'suporte' : 'comercial');
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Testa as chaves da D4Sign gravadas: devolve os cofres da conta, para escolher o dos contratos */
+  router.post('/config/assinatura/d4sign/testar', async (_req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, ...(await verificarConta(String(res.locals.empresaId))) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Webhook 2.0: cadastra o endereço do CRM no cofre dos contratos, na D4Sign */
+  router.post('/config/assinatura/d4sign/webhook', async (_req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, ...(await cadastrarWebhookCofre(String(res.locals.empresaId))) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Consulta no provedor se o número do WhatsApp gravado está conectado */
+  router.post('/config/whatsapp/:conta(provedor|campanhas)/testar', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, ...(await testarWhatsApp(String(res.locals.empresaId), contaWhats(req.params.conta))) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** QR Code para conectar o número do WhatsApp gravado (ou "já conectado") */
+  router.post('/config/whatsapp/:conta(provedor|campanhas)/conectar', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, ...(await conectarWhatsApp(String(res.locals.empresaId), contaWhats(req.params.conta))) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Pergunta curta à IA escolhida com a chave e o modelo gravados */
+  router.post('/config/whatsapp/chatbot/testar', async (_req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, mensagem: await testarChatbot(String(res.locals.empresaId)) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Cadastra na Evolution o endereço do CRM para receber mensagens e avisos de entrega/leitura */
+  router.post('/config/whatsapp/:conta(provedor|campanhas)/receber', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      res.json({ success: true, ...(await ativarRecebimento(String(res.locals.empresaId), String(req.body?.origem ?? ''), contaWhats(req.params.conta))) });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  /** Desconecta o número do WhatsApp gravado (logout na instância) */
+  router.post('/config/whatsapp/:conta(provedor|campanhas)/desconectar', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      await desconectarWhatsApp(String(res.locals.empresaId), contaWhats(req.params.conta));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
+  return router;
+}

@@ -1,0 +1,1843 @@
+/**
+ * Registro central de metadados das tabelas do banco crmweb.
+ *
+ * Este arquivo é a ÚNICA fonte de verdade das telas de manutenção:
+ *  - o backend usa para montar SQL com whitelist de colunas (evita SQL injection);
+ *  - o frontend consome via GET /api/meta/resources para desenhar as telas de CRUD.
+ *
+ * As chaves primárias são INT AUTO_INCREMENT: quem numera é o MySQL.
+ *
+ * Multi-tenant: a empresa do usuário logado (usuarios.empresa_id) isola os dados.
+ * Todo recurso declara scopeSql, aplicado em TODA consulta (alias "t", um "?" = empresa).
+ */
+
+import { FORMAS_PAGAMENTO } from '../src/utils/parcelas.js';
+import { DO_GRUPO, EMPRESAS, FOTOS_SQL, LOGO, PESSOAS, PESSOA_DO_CRM, PRODUTOS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
+
+export type FieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'decimal'
+  | 'date'
+  | 'datetime'
+  | 'time'
+  | 'enum'
+  | 'boolean'
+  | 'password'
+  | 'cnpj'
+  /** Imagem embutida (data URI), reduzida no navegador antes de gravar */
+  | 'imagem'
+  /** Conjunto de campos definidos em Configurações, gravado como JSON */
+  | 'personalizados'
+  /** Regras de segmentação de campanha, gravadas como JSON (server/campanhas.ts) */
+  | 'criterios'
+  /** Até 4 fotos no Vercel Blob; a coluna guarda os endereços em JSON (server/fotos.ts) */
+  | 'fotos'
+  /** Cor #RRGGBB escolhida numa tabela de cores (src/components/CorField.tsx) */
+  | 'cor';
+
+export interface FieldDef {
+  /** Nome da coluna no MySQL */
+  name: string;
+  /** Rótulo exibido na interface */
+  label: string;
+  type: FieldType;
+  /** Não aparece na ficha embaixo da lista (ex.: campos já resumidos em outro, como os de executor) */
+  foraDaFicha?: boolean;
+  /** Na exibição, o valor de outro campo vai antes deste ("Luis : Implementar..."); não é gravado */
+  prefixo?: { campo: string; exceto?: string };
+  /** Texto auxiliar exibido abaixo do campo no formulário */
+  hint?: string;
+  /** Campo imagem: guarda o arquivo como veio (até ~1,3 MB; maior, reduz para 1600 px) em vez de reduzir para 400×200 */
+  imagemOriginal?: boolean;
+  placeholder?: string;
+  required?: boolean;
+  /** Campo apenas leitura (gerado pelo banco ou pelo sistema): nunca vai em INSERT/UPDATE */
+  readOnly?: boolean;
+  /** Só na alteração: o formulário de inclusão não mostra e a inclusão não grava (ex.: fechamento da OS) */
+  soNaAlteracao?: boolean;
+  /** Campo só leitura mostrado dentro do formulário na edição (bloqueado), em vez da caixa de dados do banco */
+  mostrarNaEdicao?: boolean;
+  /** Campo de hora: ao preencher, acerta outro campo de hora somando estas horas (ex.: Das → Até + 2 h) */
+  somarHoras?: { campo: string; horas: number };
+  /** Exibido na grade de listagem */
+  listed?: boolean;
+  /** Participa da busca textual (LIKE) da barra de busca rápida */
+  searchable?: boolean;
+  /** Aparece no painel de busca avançada */
+  filterable?: boolean;
+  /** Opções para type === 'enum' */
+  options?: { value: string; label: string }[];
+  /** type === 'boolean' numa coluna char(1) 'S'/'N': grava 'S'/'N' (a leitura vem do sql, como 1/0) */
+  simNao?: boolean;
+  /** Chave estrangeira: carrega o combo a partir de outro recurso */
+  ref?: { resource: string; labelField: string };
+  /** Casas decimais para type === 'decimal' */
+  scale?: number;
+  maxLength?: number;
+  /** Desabilita (e zera) o campo quando outro campo tem o valor indicado */
+  disabledWhen?: { field: string; equals: string };
+  /** Campo numérico que aceita valor negativo (o sinal alterna ao digitar "-") */
+  allowNegative?: boolean;
+  /** Valor inicial na inclusão ("hoje" em campo de data = a data do dia) */
+  default?: string | number | boolean;
+  /** Largura sugerida da coluna na grade */
+  width?: 'xs' | 'sm' | 'md' | 'lg';
+  /** Colunas que o campo ocupa no formulário (de 4); sem isto vale a regra padrão */
+  span?: number;
+  /**
+   * Coluna calculada só da lista: expressão SQL sobre o alias "t" (ex.: subconsulta).
+   * Não existe na tabela, não é gravada e não aparece no formulário.
+   */
+  sql?: string;
+  /** Coluna de verdade quando o nome é outro (cadastro do ERP: cpf → cpf_cnpj). Lida, filtrada e gravada por ela */
+  coluna?: string;
+}
+
+/** Grade filha exibida no rodapé da listagem quando uma linha é selecionada (mestre-detalhe) */
+export interface DetailDef {
+  resource: string;
+  foreignKey: string;
+  label: string;
+  /** Campo decimal do filho totalizado no rodapé do painel */
+  totalField?: string;
+  /** Painel com incluir, editar e excluir (formulário genérico numa janela), com a chave do pai preenchida */
+  editavel?: boolean;
+}
+
+export interface ResourceDef {
+  /** Identificador usado nas rotas: /api/crud/:resource */
+  name: string;
+  table: string;
+  label: string;
+  labelSingular: string;
+  description: string;
+  /** Ícone lucide-react renderizado na sidebar */
+  icon: string;
+  /** Agrupamento na sidebar */
+  group: 'vendas' | 'marketing' | 'cadastros' | 'acesso';
+  /** Não aparece no menu (só como detalhe de outro recurso) */
+  oculto?: boolean;
+  /** Chave primária */
+  pk: string[];
+  /** Sempre true no crmweb: as PKs são INT AUTO_INCREMENT */
+  autoIncrement: boolean;
+  /** Campo usado como rótulo em combos de chave estrangeira */
+  labelField: string;
+  /**
+   * SELECT próprio para os combos (colunas value e label), quando o rótulo depende de
+   * outra tabela. Ex.: etapa exibida como "Funil › Etapa". Um "?" = empresa logada.
+   */
+  optionsSql?: string;
+  /** Coluna da empresa (tenant), preenchida pelo servidor na inclusão e nunca editável */
+  tenantColumn?: string;
+  /** Filtro do tenant sobre o alias "t", com um "?" para a empresa logada */
+  scopeSql: string;
+  defaultSort: { field: string; dir: 'asc' | 'desc' };
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  /**
+   * Filtro "Só as minhas" da lista: condição sobre o alias "t"; cada "?" = usuário logado.
+   * Não vai para o navegador (a tela só sabe que o filtro existe).
+   */
+  minhasSql?: string;
+  /** Campo Sim/Não com filtro rápido Todas/Sim/Não na barra da lista (ex.: concluida em atividades) */
+  filtroRapido?: string;
+  /** Valor com que o filtro rápido abre: '1' = Sim, '0' = Não (sem ele: Todas) */
+  filtroRapidoPadrao?: '1' | '0';
+  /** Toggle na barra da lista: desligado, acrescenta estes filtros (ex.: esconder as atividades do bot) */
+  toggleMostrar?: { label: string; dica: string; ocultar: { field: string; op: 'eq' | 'ne'; value: string }[] };
+  /** Excluir só preenche esta coluna com NOW() (o scopeSql deve esconder os excluídos) */
+  exclusaoLogica?: string;
+  details?: DetailDef[];
+  /** Ao clicar numa linha, mostra embaixo a ficha com todos os campos (textos longos por inteiro) */
+  ficha?: boolean;
+  /** Atividades: além da lista, visões Semana e Mês (data_vencimento, hora_vencimento, duracao, assunto) */
+  calendario?: boolean;
+  /** Filtro aplicado só na visão Lista (o calendário mostra tudo), com o aviso que aparece no contador */
+  filtroLista?: { field: string; op: 'eq' | 'ne'; value: string; aviso: string };
+  /**
+   * Lista em árvore: registros com o mesmo `grupo` formam uma família; o de menor `ordem`
+   * é a raiz e os demais aparecem como filhos (ex.: versões de uma proposta).
+   */
+  arvore?: { grupo: string; ordem: string };
+  /** O formulário não mostra a caixa "Dados gerados pelo banco" */
+  semDadosDoBanco?: boolean;
+  fields: FieldDef[];
+}
+
+const STATUS_NEGOCIO = [
+  { value: 'aberto', label: 'Aberto' },
+  { value: 'ganho', label: 'Ganho' },
+  { value: 'perdido', label: 'Perdido' },
+  { value: 'excluido', label: 'Excluído' },
+];
+
+export const TIPOS_ATIVIDADE = [
+  { value: 'ligacao', label: 'Ligação' },
+  { value: 'reuniao', label: 'Reunião Interna' },
+  { value: 'reuniao_externa', label: 'Reunião Externa' },
+  { value: 'reuniao_virtual', label: 'Reunião Virtual' },
+  { value: 'visita', label: 'Visita' },
+  { value: 'tarefa', label: 'Tarefa' },
+  { value: 'prazo', label: 'Prazo' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'almoco', label: 'Almoço' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+];
+
+/** Ícone no começo do assunto das reuniões (vai junto para o título do evento no Google Agenda) */
+export const ICONE_DO_TIPO: Record<string, string> = { reuniao_externa: '🚗', reuniao: '🏠', reuniao_virtual: '💻' };
+const ICONES = Object.values(ICONE_DO_TIPO);
+
+/** Assunto com o ícone do tipo: troca o de outro tipo de reunião e tira o ícone quando o tipo não tem */
+export function assuntoComIcone(assunto: string, tipo: string | null | undefined): string {
+  let texto = String(assunto ?? '').trimStart();
+  for (let achou = true; achou; ) {
+    achou = false;
+    for (const i of ICONES) {
+      if (texto.startsWith(i)) {
+        texto = texto.slice(i.length).trimStart();
+        achou = true;
+      }
+    }
+  }
+  const icone = tipo ? ICONE_DO_TIPO[tipo] : undefined;
+  return icone ? `${icone} ${texto}` : texto;
+}
+
+/** Papel do contato na venda */
+export const PAPEIS_CONTATO = [
+  { value: 'decisor', label: 'Decisor' },
+  { value: 'influenciador', label: 'Influenciador' },
+  { value: 'usuario', label: 'Usuário' },
+  { value: 'financeiro', label: 'Financeiro' },
+  { value: 'tecnico', label: 'Técnico' },
+  { value: 'outro', label: 'Outro' },
+];
+
+/** Para quem vai o lembrete automático da atividade (Configurações › Mensagens automáticas) */
+export const LEMBRETE_PARA = [
+  { value: 'cliente', label: 'Cliente' },
+  { value: 'vendedor', label: 'Vendedor' },
+  { value: 'ambos', label: 'Cliente e vendedor' },
+  { value: 'todos', label: 'Todos os envolvidos' },
+  { value: 'nenhum', label: 'Ninguém' },
+];
+
+/** Onde o template aparece (no ERP CRM só há o chat do WhatsApp) */
+export const CANAIS_TEMPLATE = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+];
+
+export const TIPOS_PESSOA = [
+  { value: 'lead', label: 'Lead' },
+  { value: 'cliente', label: 'Cliente' },
+];
+
+/** Tipos de cad_pessoas_enderecos (o endereço principal fica na própria cad_pessoas) */
+export const TIPOS_ENDERECO = [
+  { value: 'ENTREGA', label: 'Entrega' },
+  { value: 'COBRANÇA', label: 'Cobrança' },
+  { value: 'FILIAL', label: 'Filial' },
+  { value: 'OBRA', label: 'Obra' },
+  { value: 'OUTRO', label: 'Outro' },
+];
+
+export const TIPOS_INTERACAO = [
+  { value: 'nota', label: 'Nota' },
+  { value: 'ligacao', label: 'Ligação' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'reuniao', label: 'Reunião' },
+];
+
+export const STATUS_PROPOSTA = [
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'enviada', label: 'Enviada' },
+  { value: 'aceita', label: 'Aceita' },
+  { value: 'recusada', label: 'Recusada' },
+  { value: 'expirada', label: 'Expirada' },
+  // Outra versão da mesma proposta foi aceita (definido pela aprovação, não à mão)
+  { value: 'fechada', label: 'Fechada' },
+];
+
+export const STATUS_PEDIDO = [
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'aguardando_aprovacao', label: 'Aguardando Aprovação' },
+  { value: 'aprovado', label: 'Aprovado' },
+  { value: 'faturado', label: 'Faturado' },
+  { value: 'cancelado', label: 'Cancelado' },
+];
+
+const OBJETIVOS_CAMPANHA = [
+  { value: 'reativacao', label: 'Reativação' },
+  { value: 'nutricao', label: 'Nutrição' },
+  { value: 'conversao', label: 'Conversão' },
+  { value: 'onboarding', label: 'Onboarding' },
+  { value: 'retencao', label: 'Retenção' },
+  { value: 'upsell', label: 'Upsell' },
+];
+
+/** Canais com envio automático (o banco ainda aceita sms e push, sem envio) */
+const CANAIS_CAMPANHA = [
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'multicanal', label: 'WhatsApp ou e-mail' },
+];
+
+/** Canal de cada disparo (o multicanal da campanha vira um destes) */
+const CANAIS_DISPARO = [
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'email', label: 'E-mail' },
+];
+
+const SITUACOES_CAMPANHA = [
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'agendada', label: 'Agendada' },
+  { value: 'em_execucao', label: 'Em execução' },
+  { value: 'pausada', label: 'Pausada' },
+  { value: 'concluida', label: 'Concluída' },
+  { value: 'cancelada', label: 'Cancelada' },
+];
+
+/**
+ * Disparo (alias a) que a pessoa respondeu e alguém da equipe escreveu depois: mensagem com usuário (IA, bot e avisos
+ * de atendimento não contam). O número da conversa pode estar com ou sem o 9
+ */
+const equipeRespondeu = (a: string) => `EXISTS (SELECT 1 FROM crm_whatsapp_mensagens w
+    WHERE w.empresa_id = (SELECT c.empresa_id FROM crm_campanhas c WHERE c.id = ${a}.campanha_id)
+      AND w.telefone IN (${a}.destino, CONCAT(LEFT(${a}.destino, 4), RIGHT(${a}.destino, 8)), CONCAT(LEFT(${a}.destino, 4), '9', RIGHT(${a}.destino, 8)))
+      AND w.direcao = 'enviada' AND w.usuario_id IS NOT NULL AND w.tipo NOT IN ('evento', 'encerramento', 'apagada')
+      AND w.data_hora >= ${a}.respondido_em)`;
+
+const SITUACOES_DISPARO = [
+  { value: 'pendente', label: 'Pendente' },
+  { value: 'enviado', label: 'Enviado' },
+  { value: 'entregue', label: 'Entregue' },
+  { value: 'lido', label: 'Lido' },
+  { value: 'falhou', label: 'Falhou' },
+  { value: 'cancelado', label: 'Cancelado' },
+  // Calculadas (não gravadas): a pessoa respondeu e alguém da equipe respondeu depois, ou ainda não
+  { value: 'respondido', label: 'Respondido' },
+  { value: 'nao_respondido', label: 'Não respondido' },
+];
+
+const TIPOS_CONTRATO = [
+  { value: 'recorrente', label: 'Recorrente' },
+  { value: 'prazo_fechado', label: 'Prazo fechado' },
+];
+
+const SITUACOES_CONTRATO = [
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'aguardando_assinatura', label: 'Aguardando assinatura' },
+  { value: 'ativo', label: 'Ativo' },
+  { value: 'suspenso', label: 'Suspenso' },
+  { value: 'encerrado', label: 'Encerrado' },
+  { value: 'cancelado', label: 'Cancelado' },
+];
+
+const PERIODICIDADES = [
+  { value: 'mensal', label: 'Mensal' },
+  { value: 'bimestral', label: 'Bimestral' },
+  { value: 'trimestral', label: 'Trimestral' },
+  { value: 'semestral', label: 'Semestral' },
+  { value: 'anual', label: 'Anual' },
+  { value: 'unica', label: 'Única' },
+];
+
+/**
+ * Perfis de usuário (usuarios.tipo). Vendedor fica com o valor "client" (o que já estava gravado);
+ * só o Administrador tem regras próprias (Usuários, Configurações, permissões, assumir conversa de outro)
+ */
+export const PERFIS = [
+  { value: 'admin', label: 'Administrador' },
+  { value: 'gerente', label: 'Gerente' },
+  { value: 'supervisor', label: 'Supervisor' },
+  { value: 'client', label: 'Vendedor' },
+  { value: 'funcionario', label: 'Funcionário' },
+];
+
+const CRIADO_ATUALIZADO = [
+  { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true } as FieldDef,
+  { name: 'atualizado_em', label: 'Atualizado em', type: 'datetime', readOnly: true } as FieldDef,
+];
+/** Idem, nos cadastros do ERP (date_insert / date_update) */
+const CRIADO_ATUALIZADO_ERP = [
+  { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true, coluna: 'date_insert' } as FieldDef,
+  { name: 'atualizado_em', label: 'Atualizado em', type: 'datetime', readOnly: true, coluna: 'date_update' } as FieldDef,
+];
+/** Escopo de cad_pessoas no CRM: não excluída e cliente ou lead. O ? é a filial: a pessoa é de todas (server/erp.ts) */
+const ESCOPO_PESSOA = `t.date_delete IS NULL AND ${PESSOA_DO_CRM('t')} AND ? IS NOT NULL`;
+
+const ORIGENS_LEAD = [
+  { value: 'prospeccao', label: 'Prospecção' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'importacao', label: 'Importação' },
+];
+const CANAIS_PESQUISA = [
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'email', label: 'E-mail' },
+  { value: 'ligacao', label: 'Ligação' },
+];
+const SITUACOES_PESQUISA = [
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'em_andamento', label: 'Em andamento' },
+  { value: 'concluida', label: 'Concluída' },
+  { value: 'cancelada', label: 'Cancelada' },
+];
+const SITUACOES_ITEM_PESQUISA = [
+  { value: 'sorteado', label: 'Sorteado' },
+  { value: 'enviado', label: 'Contatado' },
+  { value: 'em_conversa', label: 'Em conversa' },
+  { value: 'respondido', label: 'Respondido' },
+  { value: 'sem_resposta', label: 'Sem resposta' },
+  { value: 'falhou', label: 'Falhou' },
+];
+
+const ID: FieldDef = { name: 'id', label: 'ID', type: 'number', readOnly: true, width: 'xs' };
+
+const itensFields = (fk: string, label: string, ref: string): FieldDef[] => [
+  ID,
+  { name: fk, label, type: 'text', required: true, ref: { resource: ref, labelField: 'titulo' } },
+  { name: 'produto_id', label: 'Produto', type: 'text', required: true, listed: true, ref: { resource: 'produtos', labelField: 'nome' } },
+  { name: 'quantidade', label: 'Quantidade', type: 'decimal', scale: 3, listed: true },
+  { name: 'preco_unitario', label: 'Preço Unitário', type: 'decimal', scale: 2, listed: true },
+  { name: 'desconto', label: 'Desconto (R$)', type: 'decimal', scale: 2, listed: true },
+  { name: 'subtotal', label: 'Subtotal', type: 'decimal', scale: 2, listed: true },
+];
+
+/**
+ * Itens do documento agrupados como na impressão resumida (agruparItens): uma linha por grupo de produtos, os grupos
+ * primeiro (na ordem do 1º item), depois os produtos sem grupo. Valor bruto (qtd × preço). Só leitura.
+ */
+const resumoPorGrupo = (itens: string, fk: string, doc: string, nomeDoc: string): ResourceDef => ({
+  name: `${itens}_grupos`,
+  table: `(SELECT MIN(i.id) AS id, i.${fk}, MAX(COALESCE(g.nome, pr.nome)) AS grupo, COUNT(*) AS itens,
+                  ROUND(SUM(i.quantidade * i.preco_unitario), 2) AS valor,
+                  MAX(pr.grupo_id IS NULL) * 1000000000 + MIN(i.id) AS posicao
+             FROM crm_${itens} i JOIN ${PRODUTOS} pr ON pr.id = i.produto_id
+             LEFT JOIN cad_produtos_categorias g ON g.id = pr.grupo_id
+            GROUP BY i.${fk}, IF(pr.grupo_id IS NULL, CONCAT('i', i.id), CONCAT('g', pr.grupo_id)))`,
+  scopeSql: `t.${fk} IN (SELECT id FROM crm_${doc} WHERE empresa_id = ?)`,
+  label: 'Resumo por Grupo',
+  labelSingular: 'Grupo',
+  description: `Itens do documento (${nomeDoc}) agrupados pelo grupo do produto`,
+  icon: 'Layers',
+  group: 'vendas',
+  oculto: true,
+  // A grade de detalhe ordena pela chave: a posição (única) já põe os grupos primeiro
+  pk: ['posicao'],
+  autoIncrement: true,
+  labelField: 'grupo',
+  defaultSort: { field: 'posicao', dir: 'asc' },
+  canCreate: false,
+  canUpdate: false,
+  canDelete: false,
+  fields: [
+    ID,
+    { name: fk, label: nomeDoc, type: 'text', ref: { resource: doc, labelField: doc === 'propostas' ? 'titulo' : 'numero_pedido' } },
+    { name: 'grupo', label: 'Grupo / Produto', type: 'text', listed: true },
+    { name: 'itens', label: 'Itens', type: 'number', listed: true, width: 'xs' },
+    { name: 'valor', label: 'Valor', type: 'decimal', scale: 2, listed: true },
+    { name: 'posicao', label: 'Posição', type: 'number', readOnly: true },
+  ],
+});
+
+export const RESOURCES: ResourceDef[] = [
+  // ============================================================
+  // VENDAS
+  // ============================================================
+  {
+    name: 'negocios',
+    table: 'crm_negocios',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Negócios',
+    labelSingular: 'Negócio',
+    description: 'Oportunidades do funil de vendas',
+    icon: 'Handshake',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'titulo',
+    defaultSort: { field: 'criado_em', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [
+      { resource: 'atividades', foreignKey: 'negocio_id', label: 'Atividades' },
+      { resource: 'propostas', foreignKey: 'negocio_id', label: 'Propostas', totalField: 'valor_total' },
+    ],
+    fields: [
+      ID,
+      { name: 'titulo', label: 'Título', type: 'text', required: true, listed: true, searchable: true, maxLength: 255 },
+      { name: 'valor', label: 'Valor', type: 'decimal', scale: 2, listed: true, filterable: true },
+      { name: 'moeda', label: 'Moeda', type: 'text', maxLength: 3, default: 'BRL', width: 'xs' },
+      { name: 'etapa_id', label: 'Funil › Etapa', type: 'text', required: true, listed: true, filterable: true, ref: { resource: 'etapas', labelField: 'nome' } },
+      { name: 'funil_id', label: 'Funil', type: 'text', readOnly: true, filterable: true, ref: { resource: 'funis', labelField: 'nome' } },
+      { name: 'pessoa_id', label: 'Contato', type: 'text', listed: true, filterable: true, ref: { resource: 'pessoas', labelField: 'nome' } },
+      {
+        name: 'proprietario_id',
+        label: 'Proprietário',
+        type: 'text',
+        listed: true,
+        filterable: true,
+        ref: { resource: 'usuarios', labelField: 'nome' },
+        hint: 'Em branco na inclusão: fica com quem criou o negócio',
+      },
+      {
+        name: 'campanha_id',
+        label: 'Campanha de origem',
+        type: 'text',
+        filterable: true,
+        ref: { resource: 'campanhas', labelField: 'nome' },
+        hint: 'Preenchida sozinha quando o lead vem de quem respondeu a uma campanha',
+      },
+      {
+        // Editados no formulário do negócio (server/participantes.ts); aqui só a coluna da lista
+        name: 'envolvidos',
+        label: 'Envolvidos',
+        type: 'text',
+        readOnly: true,
+        searchable: true,
+        sql: `(SELECT GROUP_CONCAT(u.nome ORDER BY u.nome SEPARATOR ', ') FROM crm_negocios_participantes np
+                JOIN ${USUARIOS} u ON u.id = np.usuario_id WHERE np.negocio_id = t.id)`,
+      },
+      { name: 'status', label: 'Status', type: 'enum', required: true, listed: true, filterable: true, options: STATUS_NEGOCIO },
+      { name: 'motivo_perda', label: 'Motivo da Perda', type: 'text', maxLength: 255, disabledWhen: { field: 'status', equals: 'aberto' } },
+      { name: 'data_fechamento_esperada', label: 'Fechamento Esperado', type: 'date', listed: true, filterable: true },
+      { name: 'data_ganho', label: 'Data do Ganho', type: 'datetime', readOnly: true },
+      { name: 'data_perda', label: 'Data da Perda', type: 'datetime', readOnly: true },
+      { name: 'data_ultimo_contato', label: 'Último Contato', type: 'datetime', readOnly: true, listed: true },
+      { name: 'data_proximo_followup', label: 'Próximo Follow-up', type: 'datetime', readOnly: true, listed: true },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    name: 'atividades',
+    table: 'crm_atividades',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Atividades/Tarefas',
+    labelSingular: 'Atividade',
+    description: 'Follow-ups agendados: ligações, reuniões, tarefas e prazos',
+    icon: 'CalendarCheck',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'assunto',
+    defaultSort: { field: 'data_vencimento', dir: 'desc' },
+    filtroRapido: 'concluida',
+    // Abre nas pendentes
+    filtroRapidoPadrao: '0',
+    ficha: true,
+    calendario: true,
+    // As vindas do Google Agenda aparecem só no calendário
+    filtroLista: { field: 'origem', op: 'ne', value: 'google', aviso: 'sem as vindas do Google Agenda (veja em Semana ou Mês)' },
+    // Sim/Não "Do bot": desligado esconde as que o Bot executa e as que o chatbot/automação cria sozinho
+    toggleMostrar: {
+      label: 'Do bot',
+      dica: 'Mostrar as atividades do bot (executadas pelo Bot ou criadas pelo chatbot/automação do WhatsApp)',
+      ocultar: [
+        // Pelo executor, não pela origem: a pesquisa de satisfação pelo WhatsApp tem origem "pesquisa" e é executada pelo Bot
+        { field: 'executor_bot', op: 'ne', value: '1' },
+        { field: 'origem', op: 'ne', value: 'chatbot' },
+      ],
+    },
+    // Minhas: as do usuário, as do departamento dele e as de qualquer pessoa
+    minhasSql: `(t.executor_id = ? OR (t.executor_id IS NULL AND (t.departamento_id IS NULL
+                   OR t.departamento_id = (SELECT u.departamento_id FROM ${USUARIOS_FILIAL} u WHERE u.id = ? AND u.empresa_id = t.empresa_id)))
+                 OR EXISTS (SELECT 1 FROM crm_atividade_envolvidos e WHERE e.atividade_id = t.id AND e.usuario_id = ?))`,
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      {
+        name: 'assunto',
+        label: 'Assunto',
+        type: 'text',
+        required: true,
+        listed: true,
+        searchable: true,
+        maxLength: 255,
+        // Lista, calendário e ficha mostram "Luis : Implementar..." (quem executa antes do assunto)
+        prefixo: { campo: 'quem_executa', exceto: 'Qualquer pessoa' },
+      },
+      { name: 'tipo', label: 'Tipo', type: 'enum', required: true, listed: true, filterable: true, options: TIPOS_ATIVIDADE, default: 'tarefa' },
+      { name: 'data_vencimento', label: 'Vencimento', type: 'date', required: true, listed: true, filterable: true },
+      { name: 'hora_vencimento', label: 'Hora', type: 'time', listed: true },
+      { name: 'duracao', label: 'Duração', type: 'time', default: '00:15' },
+      {
+        name: 'lembrete_para',
+        label: 'Lembrete para',
+        type: 'enum',
+        required: true,
+        options: LEMBRETE_PARA,
+        default: 'cliente',
+        hint: 'WhatsApp automático antes da atividade, se ligado em Configurações › Mensagens automáticas. Vendedor = o usuário que executa ou, sem ele, o responsável do negócio. Todos = cliente, vendedor e envolvidos. Com o Bot executando: com quem ele conversa.',
+      },
+      {
+        name: 'quem_executa',
+        label: 'Quem executa',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        sql: `IF(t.executor_bot = 1, 'Bot', COALESCE((SELECT u.nome FROM ${USUARIOS} u WHERE u.id = t.executor_id),
+                       (SELECT d.nome FROM crm_departamentos d WHERE d.id = t.departamento_id), 'Qualquer pessoa'))`,
+      },
+      {
+        name: 'executor_bot',
+        label: 'Executor: Bot',
+        type: 'boolean',
+        foraDaFicha: true,
+        filterable: true,
+        hint: 'No dia e hora, a IA conversa pelo WhatsApp com quem está em "Lembrete para" seguindo o assunto e a observação (sem WhatsApp, manda um e-mail). Sem hora: começa às 8h',
+      },
+      { name: 'executor_id', label: 'Executor (usuário)', type: 'text', foraDaFicha: true, filterable: true, ref: { resource: 'usuarios', labelField: 'nome' }, hint: 'Ou um usuário ou um departamento; os dois vazios = qualquer pessoa' },
+      { name: 'departamento_id', label: 'Executor (departamento)', type: 'text', foraDaFicha: true, filterable: true, ref: { resource: 'departamentos', labelField: 'nome' } },
+      {
+        // Gravados pela janela da atividade (server/participantes.ts); aqui só a coluna da lista
+        name: 'envolvidos',
+        label: 'Envolvidos',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        searchable: true,
+        sql: `(SELECT GROUP_CONCAT(u.nome ORDER BY u.nome SEPARATOR ', ') FROM crm_atividade_envolvidos e
+                JOIN ${USUARIOS} u ON u.id = e.usuario_id WHERE e.atividade_id = t.id)`,
+      },
+      { name: 'negocio_id', label: 'Negócio', type: 'text', listed: true, filterable: true, ref: { resource: 'negocios', labelField: 'titulo' } },
+      { name: 'pessoa_id', label: 'Contato', type: 'text', listed: true, ref: { resource: 'pessoas', labelField: 'nome' } },
+      // Atividade de um lead (Marketing › Leads); na conversão passa para a pessoa
+      { name: 'lead_id', label: 'Lead', type: 'text', filterable: true, ref: { resource: 'leads', labelField: 'nome' } },
+      {
+        // De onde veio: Bot executando, criada pelo chatbot/automação (atividades.criada_por_bot), pendência achada na análise de uma conversa (server/pendencias.ts, pela
+        // observação), ou lançada à mão. Calculada: não há coluna no banco
+        name: 'origem',
+        label: 'Origem',
+        type: 'enum',
+        readOnly: true,
+        listed: true,
+        filterable: true,
+        options: [
+          { value: 'google', label: 'Google Agenda' },
+          { value: 'bot', label: 'Bot' },
+          { value: 'chatbot', label: 'Chatbot do WhatsApp' },
+          { value: 'pendencia', label: 'Pendência da conversa' },
+          { value: 'manual', label: 'Manual' },
+        ],
+        // Google Agenda: atividade criada a partir de um evento do Google (server/agendaGoogle.ts)
+        sql: `(CASE WHEN t.google_importada = 1 THEN 'google'
+                    WHEN t.executor_bot = 1 THEN 'bot'
+                    WHEN t.criada_por_bot = 1 THEN 'chatbot'
+                    WHEN t.observacao LIKE 'Identificada pela análise automática%' THEN 'pendencia'
+                    ELSE 'manual' END)`,
+      },
+      // Para o duplo clique abrir o contrato que gerou a atividade (App.tsx)
+      { name: 'contrato_id', label: 'Contrato (id)', type: 'text', readOnly: true, foraDaFicha: true, sql: 't.contrato_id' },
+      { name: 'concluida', label: 'Concluída', type: 'boolean', listed: true, filterable: true },
+      { name: 'concluida_em', label: 'Concluída em', type: 'datetime', readOnly: true },
+      {
+        // Quem concluiu (atividades.concluida_por); o que o Bot conclui sozinho fica sem usuário e aparece como "Bot"
+        name: 'concluida_por_nome',
+        label: 'Concluída por',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        sql: `(CASE WHEN t.concluida = 0 THEN NULL
+                    WHEN t.concluida_por IS NOT NULL THEN (SELECT u.nome FROM ${USUARIOS} u WHERE u.id = t.concluida_por)
+                    WHEN t.executor_bot = 1 THEN 'Bot' END)`,
+      },
+      { name: 'observacao', label: 'Observação', type: 'textarea' },
+      // O que foi feito: preenchido no "Concluir" da lista (ou aqui)
+      { name: 'resultado', label: 'Resultado', type: 'textarea', listed: true, searchable: true },
+      { name: 'bot_resumo', label: 'Resumo do bot', type: 'textarea', readOnly: true },
+      // Dono: quem incluiu pela tela (gravado pelo servidor); só ele ou um administrador exclui
+      { name: 'criado_por', label: 'Criado por', type: 'text', readOnly: true, ref: { resource: 'usuarios', labelField: 'nome' } },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    name: 'historico_interacoes',
+    table: 'crm_historico_interacoes',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Histórico de Interações',
+    labelSingular: 'Interação',
+    description: 'Linha do tempo: notas, ligações, e-mails, WhatsApp e reuniões realizados',
+    icon: 'History',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'descricao',
+    defaultSort: { field: 'criado_em', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'criado_em', label: 'Data', type: 'datetime', readOnly: true, listed: true },
+      { name: 'tipo', label: 'Tipo', type: 'enum', required: true, listed: true, filterable: true, options: TIPOS_INTERACAO, default: 'nota' },
+      { name: 'descricao', label: 'Descrição', type: 'textarea', required: true, listed: true, searchable: true },
+      { name: 'negocio_id', label: 'Negócio', type: 'text', listed: true, filterable: true, ref: { resource: 'negocios', labelField: 'titulo' } },
+      { name: 'pessoa_id', label: 'Contato', type: 'text', listed: true, ref: { resource: 'pessoas', labelField: 'nome' } },
+      { name: 'proposta_id', label: 'Proposta', type: 'text', ref: { resource: 'propostas', labelField: 'titulo' } },
+      { name: 'pedido_id', label: 'Pedido', type: 'text', ref: { resource: 'pedidos', labelField: 'numero_pedido' } },
+    ],
+  },
+  {
+    // Pesquisa de satisfação do WhatsApp (server/pesquisa.ts): só leitura, gravada pelo atendimento
+    name: 'avaliacoes',
+    table: 'crm_avaliacoes',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Avaliações',
+    labelSingular: 'Avaliação',
+    description: 'Pesquisa de satisfação do WhatsApp: nota de 1 a 5 ao encerrar o atendimento',
+    icon: 'Star',
+    group: 'marketing',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'id',
+    defaultSort: { field: 'pedida_em', dir: 'desc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [
+      ID,
+      { name: 'pedida_em', label: 'Data', type: 'datetime', readOnly: true, listed: true, filterable: true },
+      {
+        name: 'cliente',
+        label: 'Cliente',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        searchable: true,
+        sql: `COALESCE((SELECT p.nome FROM ${PESSOAS} p WHERE p.id = t.pessoa_id),
+                       (SELECT w.nome_contato FROM crm_whatsapp_mensagens w WHERE w.empresa_id = t.empresa_id AND w.telefone = t.telefone AND w.nome_contato IS NOT NULL ORDER BY w.id DESC LIMIT 1),
+                       CONCAT('+', t.telefone))`,
+      },
+      { name: 'atendente_id', label: 'Atendente', type: 'text', readOnly: true, listed: true, filterable: true, ref: { resource: 'usuarios', labelField: 'nome' } },
+      { name: 'departamento_id', label: 'Departamento', type: 'text', readOnly: true, listed: true, filterable: true, ref: { resource: 'departamentos', labelField: 'nome' } },
+      { name: 'origem', label: 'Atendido por', type: 'enum', readOnly: true, listed: true, filterable: true, options: [{ value: 'atendente', label: 'Equipe' }, { value: 'jornada', label: 'Bot / automação' }] },
+      { name: 'nota', label: 'Nota', type: 'number', readOnly: true, listed: true, filterable: true, width: 'xs' },
+      { name: 'comentario', label: 'Comentário', type: 'textarea', readOnly: true, listed: true, searchable: true },
+      {
+        name: 'situacao',
+        label: 'Situação',
+        type: 'enum',
+        readOnly: true,
+        listed: true,
+        filterable: true,
+        options: [
+          { value: 'aguardando_nota', label: 'Aguardando nota' },
+          { value: 'aguardando_comentario', label: 'Aguardando comentário' },
+          { value: 'respondida', label: 'Respondida' },
+          { value: 'expirada', label: 'Sem resposta' },
+        ],
+      },
+      { name: 'telefone', label: 'WhatsApp', type: 'text', readOnly: true, searchable: true },
+      { name: 'respondida_em', label: 'Respondida em', type: 'datetime', readOnly: true },
+    ],
+  },
+  {
+    name: 'propostas',
+    table: 'crm_propostas',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Propostas',
+    labelSingular: 'Proposta',
+    description: 'Propostas comerciais com itens do catálogo e controle de versões',
+    icon: 'FileSignature',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'titulo',
+    optionsSql: "SELECT id AS value, CONCAT('#', numero_proposta, ' v', versao, ' — ', titulo) AS label FROM crm_propostas WHERE empresa_id = ? ORDER BY numero_proposta DESC LIMIT 1000",
+    defaultSort: { field: 'numero_proposta', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [
+      // Resumo por Grupo é a 1ª aba do detalhe
+      { resource: 'proposta_itens_grupos', foreignKey: 'proposta_id', label: 'Resumo por Grupo', totalField: 'valor' },
+      { resource: 'proposta_itens', foreignKey: 'proposta_id', label: 'Itens da Proposta', totalField: 'subtotal' },
+    ],
+    // Versões da proposta em árvore: a v1 em cima, as demais como filhas
+    arvore: { grupo: 'numero_proposta', ordem: 'versao' },
+    fields: [
+      ID,
+      { name: 'numero_proposta', label: 'Número', type: 'number', readOnly: true, listed: true, width: 'xs' },
+      { name: 'versao', label: 'Versão', type: 'number', readOnly: true, listed: true, width: 'xs' },
+      // Controle livre; padrão AAAA/NNN (+ "-02", "-03"… nas versões), gerado em server/crm.ts
+      {
+        name: 'qtd_versoes',
+        label: 'Versões',
+        type: 'number',
+        readOnly: true,
+        width: 'xs',
+        sql: `(SELECT COUNT(*) FROM crm_propostas x WHERE x.empresa_id = t.empresa_id AND x.numero_proposta = t.numero_proposta)`,
+      },
+      { name: 'controle', label: 'Controle', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 30, width: 'sm' },
+      { name: 'titulo', label: 'Título', type: 'text', required: true, listed: true, searchable: true, maxLength: 255 },
+      { name: 'negocio_id', label: 'Negócio', type: 'text', required: true, listed: true, filterable: true, ref: { resource: 'negocios', labelField: 'titulo' } },
+      { name: 'pessoa_id', label: 'Contato', type: 'text', ref: { resource: 'pessoas', labelField: 'nome' } },
+      { name: 'status', label: 'Status', type: 'enum', required: true, listed: true, filterable: true, options: STATUS_PROPOSTA },
+      { name: 'valor_subtotal', label: 'Subtotal', type: 'decimal', scale: 2, readOnly: true },
+      { name: 'valor_desconto', label: 'Desconto', type: 'decimal', scale: 2, readOnly: true },
+      { name: 'valor_total', label: 'Total', type: 'decimal', scale: 2, readOnly: true, listed: true, filterable: true },
+      { name: 'validade_dias', label: 'Validade (dias)', type: 'number' },
+      { name: 'data_validade', label: 'Válida até', type: 'date', listed: true, filterable: true },
+      { name: 'condicoes_pagamento', label: 'Condições de Pagamento', type: 'textarea' },
+      { name: 'observacoes', label: 'Observações', type: 'textarea' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    name: 'proposta_itens',
+    table: 'crm_proposta_itens',
+    scopeSql: 't.proposta_id IN (SELECT id FROM crm_propostas WHERE empresa_id = ?)',
+    label: 'Itens da Proposta',
+    labelSingular: 'Item da Proposta',
+    description: 'Produtos incluídos em cada proposta',
+    icon: 'ListOrdered',
+    group: 'vendas',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'produto_id',
+    defaultSort: { field: 'criado_em', dir: 'asc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [...itensFields('proposta_id', 'Proposta', 'propostas'), { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true }],
+  },
+  resumoPorGrupo('proposta_itens', 'proposta_id', 'propostas', 'Proposta'),
+  {
+    name: 'pedidos',
+    table: 'crm_pedidos',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Pedidos de Venda',
+    labelSingular: 'Pedido',
+    description: 'Digitação e fechamento dos pedidos de venda',
+    icon: 'ShoppingCart',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'numero_pedido',
+    optionsSql: "SELECT id AS value, CONCAT('Pedido #', numero_pedido) AS label FROM crm_pedidos WHERE empresa_id = ? ORDER BY numero_pedido DESC LIMIT 1000",
+    defaultSort: { field: 'numero_pedido', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [
+      { resource: 'pedido_itens', foreignKey: 'pedido_id', label: 'Itens do Pedido', totalField: 'subtotal' },
+      { resource: 'pedido_itens_grupos', foreignKey: 'pedido_id', label: 'Resumo por Grupo', totalField: 'valor' },
+    ],
+    fields: [
+      ID,
+      { name: 'numero_pedido', label: 'Número', type: 'number', readOnly: true, listed: true, width: 'xs' },
+      { name: 'data_emissao', label: 'Emissão', type: 'datetime', readOnly: true, listed: true, filterable: true },
+      { name: 'negocio_id', label: 'Negócio', type: 'text', listed: true, filterable: true, ref: { resource: 'negocios', labelField: 'titulo' } },
+      { name: 'proposta_id', label: 'Proposta de Origem', type: 'text', ref: { resource: 'propostas', labelField: 'titulo' } },
+      { name: 'pessoa_id', label: 'Contato', type: 'text', ref: { resource: 'pessoas', labelField: 'nome' } },
+      { name: 'status', label: 'Status', type: 'enum', required: true, listed: true, filterable: true, options: STATUS_PEDIDO },
+      { name: 'valor_subtotal', label: 'Subtotal', type: 'decimal', scale: 2, readOnly: true },
+      { name: 'valor_desconto', label: 'Desconto', type: 'decimal', scale: 2, readOnly: true },
+      { name: 'valor_total', label: 'Total', type: 'decimal', scale: 2, readOnly: true, listed: true, filterable: true },
+      { name: 'condicao_pagamento', label: 'Condição de Pagamento', type: 'text', listed: true, maxLength: 100 },
+      { name: 'observacoes', label: 'Observações', type: 'textarea' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    name: 'pedido_itens',
+    table: 'crm_pedido_itens',
+    scopeSql: 't.pedido_id IN (SELECT id FROM crm_pedidos WHERE empresa_id = ?)',
+    label: 'Itens do Pedido',
+    labelSingular: 'Item do Pedido',
+    description: 'Produtos incluídos em cada pedido',
+    icon: 'ListOrdered',
+    group: 'vendas',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'produto_id',
+    defaultSort: { field: 'criado_em', dir: 'asc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [...itensFields('pedido_id', 'Pedido', 'pedidos'), { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true }],
+  },
+  resumoPorGrupo('pedido_itens', 'pedido_id', 'pedidos', 'Pedido'),
+  {
+    // Totais, documentos, assinatura (D4Sign) e renovação: server/contratos.ts
+    name: 'contratos',
+    table: 'crm_contratos',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Contratos',
+    labelSingular: 'Contrato',
+    description: 'Contratos recorrentes e de prazo fechado: vigência, valores, renovação e assinatura eletrônica',
+    icon: 'ScrollText',
+    group: 'vendas',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'titulo',
+    defaultSort: { field: 'numero', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [{ resource: 'contrato_itens', foreignKey: 'contrato_id', label: 'Itens', totalField: 'subtotal', editavel: true }],
+    fields: [
+      ID,
+      { name: 'numero', label: 'Número', type: 'number', readOnly: true, listed: true, width: 'xs' },
+      { name: 'titulo', label: 'Título', type: 'text', required: true, listed: true, searchable: true, maxLength: 255, span: 3 },
+      { name: 'pessoa_id', label: 'Cliente', type: 'text', required: true, listed: true, filterable: true, ref: { resource: 'pessoas', labelField: 'nome' } },
+      { name: 'tipo', label: 'Tipo', type: 'enum', required: true, listed: true, filterable: true, options: TIPOS_CONTRATO, default: 'recorrente' },
+      { name: 'situacao', label: 'Situação', type: 'enum', required: true, listed: true, filterable: true, options: SITUACOES_CONTRATO, default: 'rascunho' },
+      {
+        // Pelos documentos: via assinada (D4Sign ou anexada como "Assinado") ou envio em andamento
+        name: 'assinatura',
+        label: 'Assinatura',
+        type: 'enum',
+        readOnly: true,
+        listed: true,
+        filterable: true,
+        options: [
+          { value: 'assinado', label: 'Assinado' },
+          { value: 'em_assinatura', label: 'Em assinatura' },
+          { value: 'nao_assinado', label: 'Não assinado' },
+        ],
+        sql: `(CASE WHEN EXISTS (SELECT 1 FROM crm_contrato_documentos d WHERE d.contrato_id = t.id AND (d.assinatura_situacao = 'assinado' OR d.tipo = 'assinado')) THEN 'assinado'
+                    WHEN EXISTS (SELECT 1 FROM crm_contrato_documentos d WHERE d.contrato_id = t.id AND d.assinatura_situacao IN ('enviado', 'visualizado')) THEN 'em_assinatura'
+                    ELSE 'nao_assinado' END)`,
+      },
+      {
+        // Andamento do último envio à D4Sign: signatários que já assinaram de quantos há
+        name: 'assinaturas',
+        label: 'Assinaturas',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        sql: `(SELECT CONCAT((SELECT COUNT(*) FROM JSON_TABLE(d.signatarios, '$[*]' COLUMNS (a BOOLEAN PATH '$.assinado')) j WHERE j.a),
+                             ' de ', JSON_LENGTH(d.signatarios))
+                 FROM crm_contrato_documentos d
+                WHERE d.contrato_id = t.id AND d.assinatura_situacao IN ('enviado', 'visualizado', 'assinado') AND JSON_LENGTH(d.signatarios) > 0
+                ORDER BY d.assinatura_enviada_em DESC, d.id DESC LIMIT 1)`,
+      },
+      {
+        // Quando a via assinada chegou ao CRM (a D4Sign finaliza só depois do último signatário)
+        name: 'assinado_em',
+        label: 'Assinado em',
+        type: 'date',
+        readOnly: true,
+        listed: true,
+        filterable: true,
+        sql: `(SELECT DATE(MAX(COALESCE(d.assinatura_concluida_em, d.criado_em))) FROM crm_contrato_documentos d
+                WHERE d.contrato_id = t.id AND (d.assinatura_situacao = 'assinado' OR d.tipo = 'assinado'))`,
+      },
+      { name: 'data_inicio', label: 'Início', type: 'date', required: true, listed: true, filterable: true },
+      { name: 'data_fim', label: 'Fim', type: 'date', listed: true, filterable: true, hint: 'Em branco: prazo indeterminado' },
+      { name: 'periodicidade', label: 'Periodicidade', type: 'enum', required: true, listed: true, options: PERIODICIDADES, default: 'mensal' },
+      { name: 'dia_vencimento', label: 'Dia de vencimento', type: 'number', width: 'xs' },
+      { name: 'valor_periodo', label: 'Valor por período', type: 'decimal', scale: 2, readOnly: true, listed: true, hint: 'Soma dos itens' },
+      { name: 'valor_total', label: 'Valor total', type: 'decimal', scale: 2, readOnly: true, listed: true, hint: 'Da vigência (sem fim: 12 meses)' },
+      { name: 'renovacao_automatica', label: 'Renovação automática', type: 'boolean', listed: true, default: true, hint: 'Vencido, renova por 12 meses; sem ela, encerra' },
+      { name: 'aviso_renovacao_dias', label: 'Aviso de renovação (dias)', type: 'number', default: 60, hint: 'Cria a tarefa "Renovar contrato" antes do fim' },
+      { name: 'indice_reajuste', label: 'Índice de reajuste', type: 'text', maxLength: 20, placeholder: 'IPCA, IGP-M…' },
+      { name: 'data_proximo_reajuste', label: 'Próximo reajuste', type: 'date' },
+      { name: 'negocio_id', label: 'Negócio', type: 'text', filterable: true, ref: { resource: 'negocios', labelField: 'titulo' } },
+      { name: 'proposta_id', label: 'Proposta', type: 'text', ref: { resource: 'propostas', labelField: 'titulo' } },
+      { name: 'proprietario_id', label: 'Responsável', type: 'text', listed: true, filterable: true, ref: { resource: 'usuarios', labelField: 'nome' } },
+      { name: 'motivo_encerramento', label: 'Motivo do encerramento', type: 'text', maxLength: 255, disabledWhen: { field: 'situacao', equals: 'ativo' } },
+      { name: 'observacoes', label: 'Observações', type: 'textarea' },
+      { name: 'cod_integracao', label: 'Cód.Integração', type: 'text', maxLength: 50, hint: 'Código no sistema de gestão' },
+      { name: 'encerrado_em', label: 'Encerrado em', type: 'datetime', readOnly: true },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    // Editados no painel de detalhe do contrato; subtotal e totais calculados pelo servidor
+    name: 'contrato_itens',
+    table: 'crm_contrato_itens',
+    scopeSql: 't.contrato_id IN (SELECT id FROM crm_contratos WHERE empresa_id = ?)',
+    label: 'Itens do Contrato',
+    labelSingular: 'Item do Contrato',
+    description: 'Produtos e licenças do contrato',
+    icon: 'ListOrdered',
+    group: 'vendas',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'id',
+    defaultSort: { field: 'id', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'contrato_id', label: 'Contrato', type: 'text', required: true, ref: { resource: 'contratos', labelField: 'titulo' } },
+      { name: 'produto_id', label: 'Produto', type: 'text', required: true, listed: true, ref: { resource: 'produtos', labelField: 'nome' } },
+      { name: 'quantidade', label: 'Quantidade', type: 'decimal', scale: 3, required: true, listed: true, default: '1.000' },
+      { name: 'preco_unitario', label: 'Valor por período', type: 'decimal', scale: 2, listed: true, hint: 'Em branco: preço de tabela do produto' },
+      { name: 'desconto', label: 'Desconto (R$)', type: 'decimal', scale: 2, listed: true },
+      { name: 'subtotal', label: 'Subtotal', type: 'decimal', scale: 2, readOnly: true, listed: true },
+      { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true },
+    ],
+  },
+
+  // ============================================================
+  // CADASTROS
+  // ============================================================
+  {
+    // Filial logada: os dados são do ERP (sys_empresas); daqui só se grava o logo (crm_config, server/crud.ts)
+    name: 'empresas',
+    table: 'sys_empresas',
+    scopeSql: 't.id = ?',
+    label: 'Minha Empresa',
+    labelSingular: 'Empresa',
+    description: 'Dados da filial logada, do cadastro do ERP (impressos nas propostas e pedidos)',
+    icon: 'Building2',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: false,
+    canUpdate: true,
+    canDelete: false,
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', readOnly: true, listed: true, searchable: true, sql: `COALESCE(NULLIF(t.nome_fantasia, ''), t.razao_social)` },
+      { name: 'cnpj', label: 'CNPJ', type: 'cnpj', readOnly: true, listed: true, searchable: true },
+      { name: 'endereco', label: 'Endereço', type: 'textarea', readOnly: true, listed: true, sql: `(SELECT x.endereco FROM ${EMPRESAS} x WHERE x.id = t.id)` },
+      { name: 'logo', label: 'Logo', type: 'imagem', sql: LOGO('t.id'), hint: 'Aparece no cabeçalho da impressão de propostas e pedidos' },
+    ],
+  },
+  {
+    // Cadastro de pessoas do ERP (cad_pessoas), de todas as filiais. Lead = não é cliente (is_cliente = 0)
+    name: 'pessoas',
+    table: 'cad_pessoas',
+    scopeSql: ESCOPO_PESSOA,
+    exclusaoLogica: 'date_delete',
+    label: 'Pessoas',
+    labelSingular: 'Pessoa',
+    description: 'Contatos dos leads e clientes',
+    icon: 'Users',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    // Inativos continuam nos combos (proposta para reativar o sistema), marcados
+    optionsSql: `SELECT t.id AS value, CONCAT(t.nome, IF(t.ativo = 1, '', ' (inativo)')) AS label
+                   FROM cad_pessoas t WHERE ${ESCOPO_PESSOA} ORDER BY t.nome LIMIT 5000`,
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [
+      { resource: 'negocios', foreignKey: 'pessoa_id', label: 'Negócios', totalField: 'valor' },
+      { resource: 'atividades', foreignKey: 'pessoa_id', label: 'Atividades' },
+      { resource: 'pessoas_contatos', foreignKey: 'pessoa_id', label: 'Contatos', editavel: true },
+      { resource: 'pessoas_enderecos', foreignKey: 'pessoa_id', label: 'Endereços' },
+    ],
+    fields: [
+      ID,
+      // Gravado em is_cliente (server/regras.ts)
+      { name: 'tipo', label: 'Tipo', type: 'enum', required: true, listed: true, filterable: true, options: TIPOS_PESSOA, default: 'cliente', width: 'xs', span: 1, sql: `IF(t.is_cliente = 1, 'cliente', 'lead')` },
+      // Tipo + Nome dividem a primeira linha do formulário (grade de 4 colunas)
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 50, span: 3 },
+      { name: 'segmento_id', label: 'Segmento', type: 'text', listed: true, filterable: true, ref: { resource: 'segmentos', labelField: 'nome' } },
+      {
+        name: 'ativo',
+        label: 'Ativo',
+        type: 'boolean',
+        listed: true,
+        filterable: true,
+        default: true,
+        width: 'xs',
+        hint: 'Inativo continua nas listas (propostas, negócios) para quando o cliente quiser reativar. Vem do bmsoft na importação',
+      },
+      {
+        name: 'nao_receber_campanhas',
+        label: 'Não receber campanhas',
+        type: 'boolean',
+        filterable: true,
+        default: false,
+        hint: 'Fica fora de todas as campanhas. Marcado sozinho quando a pessoa responde "SAIR" a uma campanha no WhatsApp',
+      },
+      { name: 'email', label: 'E-mail', type: 'text', listed: true, searchable: true, maxLength: 120, coluna: 'email_principal' },
+      { name: 'telefone', label: 'Telefone', type: 'text', listed: true, searchable: true, maxLength: 20, coluna: 'fone_principal' },
+      { name: 'whatsapp', label: 'WhatsApp', type: 'text', listed: true, searchable: true, maxLength: 20, hint: 'Com DDD. Usado nas campanhas e mensagens automáticas (sem ele, vale o telefone)' },
+      { name: 'cpf', label: 'CPF/CNPJ', type: 'text', searchable: true, maxLength: 18, coluna: 'cpf_cnpj', hint: 'Gravado só com os dígitos' },
+      { name: 'obs', label: 'Observação', type: 'textarea', coluna: 'observacoes' },
+      { name: 'personalizados', label: 'Campos Personalizados', type: 'personalizados' },
+      { name: 'cod_integracao', label: 'Código', type: 'text', readOnly: true, listed: true, filterable: true, searchable: true, coluna: 'codigo', hint: 'Código da pessoa no ERP' },
+      { name: 'google_place_id', label: 'Google Place ID', type: 'text', readOnly: true, searchable: true, hint: 'Código da empresa no Google Maps, gravado pela Prospecção: evita incluir o mesmo lead de novo' },
+      {
+        name: 'prospeccao_busca_id',
+        label: 'Busca da prospecção',
+        type: 'text',
+        readOnly: true,
+        filterable: true,
+        ref: { resource: 'prospeccao_buscas', labelField: 'termo' },
+        hint: 'Busca da Prospecção que incluiu este lead',
+      },
+      {
+        name: 'cidade_uf',
+        label: 'Cidade/UF',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        searchable: true,
+        filterable: true,
+        // Do endereço principal (no ERP, o da própria pessoa)
+        sql: `NULLIF(CONCAT_WS(' / ', t.cidade_nome, t.cidade_uf), '')`,
+      },
+      ...CRIADO_ATUALIZADO_ERP,
+    ],
+  },
+  {
+    // Contatos da pessoa: quem se fala dentro da empresa-cliente. Mantidos no detalhe da pessoa
+    name: 'pessoas_contatos',
+    table: 'cad_pessoas_contatos',
+    scopeSql: '? IS NOT NULL', // contato é da pessoa, que é de todas as filiais (server/erp.ts)
+    label: 'Contatos',
+    labelSingular: 'Contato',
+    description: 'Contatos das pessoas (quem se fala na empresa-cliente)',
+    icon: 'Users',
+    group: 'cadastros',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'principal', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      // sem ref: o painel já está na pessoa (o servidor confere que ela é da empresa)
+      { name: 'pessoa_id', label: 'Pessoa', type: 'number', required: true },
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100, span: 2 },
+      { name: 'cargo', label: 'Cargo', type: 'text', listed: true, maxLength: 60 },
+      { name: 'departamento', label: 'Departamento', type: 'text', listed: true, maxLength: 60 },
+      { name: 'papel', label: 'Papel na venda', type: 'enum', listed: true, options: PAPEIS_CONTATO },
+      { name: 'whatsapp', label: 'WhatsApp', type: 'text', listed: true, maxLength: 20, placeholder: '(00) 00000-0000' },
+      { name: 'celular', label: 'Celular', type: 'text', listed: true, maxLength: 20, placeholder: '(00) 00000-0000' },
+      { name: 'telefone', label: 'Telefone', type: 'text', maxLength: 20, coluna: 'fone' },
+      { name: 'ramal', label: 'Ramal', type: 'text', maxLength: 10 },
+      { name: 'email', label: 'E-mail', type: 'text', listed: true, maxLength: 120, span: 2 },
+      { name: 'data_nascimento', label: 'Nascimento', type: 'date', coluna: 'aniversario' },
+      { name: 'linkedin', label: 'LinkedIn', type: 'text', maxLength: 255, placeholder: 'https://www.linkedin.com/in/...' },
+      { name: 'principal', label: 'Principal', type: 'boolean', listed: true, hint: 'Um só por pessoa: marcar este desmarca o anterior' },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, default: true, hint: 'Desligue quando sair da empresa-cliente: fica no histórico, mas não recebe mensagens' },
+      { name: 'aceita_whatsapp', label: 'Aceita WhatsApp', type: 'boolean', default: true },
+      { name: 'aceita_email', label: 'Aceita e-mail', type: 'boolean', default: true },
+      { name: 'obs', label: 'Observação', type: 'textarea', maxLength: 255, coluna: 'observacoes' },
+    ],
+  },
+  {
+    // Endereços adicionais (o principal fica na própria pessoa). São editados no cadastro da pessoa
+    // (server/enderecos.ts); este recurso só alimenta o painel de detalhe da lista
+    name: 'pessoas_enderecos',
+    table: 'cad_pessoas_enderecos',
+    scopeSql: '? IS NOT NULL', // endereço é da pessoa, que é de todas as filiais (server/erp.ts)
+    label: 'Endereços',
+    labelSingular: 'Endereço',
+    description: 'Endereços das pessoas',
+    icon: 'MapPin',
+    group: 'cadastros',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'logradouro',
+    defaultSort: { field: 'id', dir: 'asc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [
+      ID,
+      // sem ref: o painel já está na pessoa e o combo carregaria todas as pessoas à toa
+      { name: 'pessoa_id', label: 'Pessoa', type: 'number' },
+      { name: 'tipo', label: 'Tipo', type: 'enum', listed: true, options: TIPOS_ENDERECO },
+      { name: 'principal', label: 'Principal', type: 'boolean', listed: true },
+      { name: 'cep', label: 'CEP', type: 'text', listed: true },
+      { name: 'logradouro', label: 'Logradouro', type: 'text', listed: true },
+      { name: 'numero', label: 'Número', type: 'text', listed: true },
+      { name: 'complemento', label: 'Complemento', type: 'text', listed: true },
+      { name: 'bairro', label: 'Bairro', type: 'text', listed: true },
+      { name: 'cidade', label: 'Cidade', type: 'text', listed: true, coluna: 'cidade_nome' },
+      { name: 'uf', label: 'UF', type: 'text', listed: true, coluna: 'cidade_uf' },
+      { name: 'codigo_ibge', label: 'Cód. IBGE', type: 'text', coluna: 'cidade_ibge' },
+      { name: 'obs', label: 'Descrição', type: 'text', listed: true, coluna: 'descricao' },
+    ],
+  },
+  {
+    name: 'departamentos',
+    table: 'crm_departamentos',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Departamentos',
+    labelSingular: 'Departamento',
+    description: 'Áreas da empresa (Vendas, Suporte, Financeiro...): agrupam usuários e recebem atividades',
+    icon: 'Network',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    optionsSql: `SELECT id AS value, CONCAT(nome, IF(ativo = 1, '', ' (inativo)')) AS label
+                   FROM crm_departamentos WHERE empresa_id = ? ORDER BY ativo DESC, nome LIMIT 1000`,
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [{ resource: 'usuarios', foreignKey: 'departamento_id', label: 'Usuários do Departamento' }],
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 80 },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, filterable: true, default: true, width: 'xs' },
+      { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true },
+    ],
+  },
+  {
+    // Cadastros › Templates: textos prontos para responder no WhatsApp e nos Chamados (botão ao lado do campo da mensagem)
+    name: 'templates',
+    table: 'crm_templates_mensagens',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Templates',
+    labelSingular: 'Template',
+    description: 'Mensagens prontas para o WhatsApp',
+    icon: 'MessageSquareText',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'descricao',
+    defaultSort: { field: 'descricao', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'descricao', label: 'Descrição', type: 'text', required: true, listed: true, searchable: true, maxLength: 100, span: 3, hint: 'Nome curto: é o que aparece na lista de escolha' },
+      { name: 'canal', label: 'Canal', type: 'enum', required: true, listed: true, filterable: true, options: CANAIS_TEMPLATE, default: 'todos', width: 'xs', span: 1 },
+      {
+        name: 'texto',
+        label: 'Texto',
+        type: 'textarea',
+        required: true,
+        listed: true,
+        searchable: true,
+        hint: 'Variáveis: {{nome}} e {{primeiro_nome}} do cliente, {{atendente}} = quem envia',
+      },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, filterable: true, default: true, width: 'xs' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    // Marketing › Leads: contatos que ainda não são clientes (server/leads.ts). Convertido some da lista
+    // (vira pessoa: botão Converter ou ao abrir negócio, proposta ou pedido)
+    name: 'leads',
+    table: 'crm_leads',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ? AND t.convertido_em IS NULL',
+    label: 'Leads',
+    labelSingular: 'Lead',
+    description: 'Contatos que ainda não são clientes: da Prospecção, do WhatsApp e cadastrados à mão',
+    icon: 'Target',
+    group: 'marketing',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    optionsSql: 'SELECT id AS value, nome AS label FROM crm_leads WHERE empresa_id = ? AND convertido_em IS NULL ORDER BY nome LIMIT 5000',
+    defaultSort: { field: 'criado_em', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [{ resource: 'atividades', foreignKey: 'lead_id', label: 'Atividades' }],
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 255, span: 3 },
+      { name: 'origem', label: 'Origem', type: 'enum', required: true, listed: true, filterable: true, options: ORIGENS_LEAD, default: 'manual', width: 'xs', span: 1 },
+      { name: 'contato', label: 'Contato', type: 'text', listed: true, searchable: true, maxLength: 150, hint: 'Com quem falar na empresa' },
+      { name: 'whatsapp', label: 'WhatsApp', type: 'text', listed: true, searchable: true, maxLength: 30, hint: 'Com DDD. Usado nas campanhas (sem ele, vale o telefone)' },
+      { name: 'telefone', label: 'Telefone', type: 'text', listed: true, searchable: true, maxLength: 30 },
+      { name: 'email', label: 'E-mail', type: 'text', listed: true, searchable: true, maxLength: 255 },
+      { name: 'cidade', label: 'Cidade', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 100 },
+      { name: 'uf', label: 'UF', type: 'text', listed: true, filterable: true, maxLength: 2, width: 'xs' },
+      { name: 'segmento_id', label: 'Segmento', type: 'text', listed: true, filterable: true, ref: { resource: 'segmentos', labelField: 'nome' } },
+      {
+        name: 'nao_receber_campanhas',
+        label: 'Não receber campanhas',
+        type: 'boolean',
+        filterable: true,
+        default: false,
+        hint: 'Fica fora de todas as campanhas. Marcado sozinho quando responde "SAIR" a uma campanha no WhatsApp',
+      },
+      { name: 'obs', label: 'Observação', type: 'textarea' },
+      {
+        name: 'prospeccao_busca_id',
+        label: 'Busca da prospecção',
+        type: 'text',
+        readOnly: true,
+        filterable: true,
+        ref: { resource: 'prospeccao_buscas', labelField: 'termo' },
+        hint: 'Busca da Prospecção que incluiu este lead',
+      },
+      { name: 'google_place_id', label: 'Google Place ID', type: 'text', readOnly: true, hint: 'Código no Google Maps, gravado pela Prospecção: evita incluir o mesmo lead de novo' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    // Buscas guardadas da Prospecção (server/prospeccao.ts): só para o combo "Busca da prospecção" de Pessoas
+    name: 'prospeccao_buscas',
+    table: 'crm_prospeccao_buscas',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Buscas da Prospecção',
+    labelSingular: 'Busca da Prospecção',
+    description: 'Buscas feitas na Prospecção',
+    icon: 'Radar',
+    group: 'marketing',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'termo',
+    optionsSql: `SELECT id AS value, CONCAT(termo, ' – ', local, ' – ', DATE_FORMAT(criado_em, '%d/%m/%Y %H:%i')) AS label
+                   FROM crm_prospeccao_buscas WHERE empresa_id = ? ORDER BY id DESC LIMIT 1000`,
+    defaultSort: { field: 'criado_em', dir: 'desc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [
+      ID,
+      { name: 'termo', label: 'Termo', type: 'text', listed: true, searchable: true },
+      { name: 'local', label: 'Local', type: 'text', listed: true, searchable: true },
+      { name: 'criado_em', label: 'Feita em', type: 'datetime', listed: true, readOnly: true },
+    ],
+  },
+  {
+    name: 'segmentos',
+    table: 'crm_segmentos',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Segmentos',
+    labelSingular: 'Segmento',
+    description: 'Segmentação das pessoas: grupos usados para filtrar e direcionar o atendimento',
+    icon: 'Tags',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    // Os inativos também vêm (senão a lista de pessoas mostraria "…" no lugar do nome),
+    // marcados e no fim do combo
+    optionsSql: `SELECT id AS value, CONCAT(nome, IF(ativo = 1, '', ' (inativo)')) AS label
+                   FROM crm_segmentos WHERE empresa_id = ? ORDER BY ativo DESC, nome LIMIT 1000`,
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    details: [{ resource: 'pessoas', foreignKey: 'segmento_id', label: 'Pessoas do Segmento' }],
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100 },
+      { name: 'descricao', label: 'Descrição', type: 'text', listed: true, searchable: true, maxLength: 255, span: 3 },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, filterable: true, default: true, width: 'xs' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    // Cadastro de produtos do ERP (cad_produtos, do grupo de empresas da filial; serviço = servico 1). Inclusão, exclusão
+    // e os dados fiscais ficam no ERP; aqui só o nome na proposta e as fotos (cad_produtos_imagens)
+    name: 'produtos',
+    table: 'cad_produtos',
+    scopeSql: DO_GRUPO('t.grupo_id'),
+    label: 'Produtos',
+    labelSingular: 'Produto',
+    description: 'Produtos e serviços do ERP, com o preço de venda',
+    icon: 'Package',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'grupo_id', dir: 'asc' }, // sem grupo no fim; no grupo, pelo nome
+    canCreate: false,
+    canUpdate: true,
+    canDelete: false,
+    fields: [
+      ID,
+      // Grupo (categoria do ERP) é a 1ª coluna da lista
+      {
+        name: 'grupo_id',
+        label: 'Grupo',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        filterable: true,
+        coluna: 'categoria_id',
+        ref: { resource: 'produtos_grupos', labelField: 'nome' },
+        hint: 'Categoria do ERP. Na proposta/pedido impresso "resumido", os produtos do mesmo grupo saem numa linha só, com o nome do grupo e o valor somado',
+      },
+      { name: 'codigo_sku', label: 'SKU', type: 'text', readOnly: true, listed: true, searchable: true, width: 'sm', coluna: 'sku' },
+      { name: 'nome', label: 'Nome', type: 'text', readOnly: true, listed: true, searchable: true },
+      { name: 'nome_proposta', label: 'Nome na Proposta', type: 'text', searchable: true, maxLength: 255, hint: 'Preenchido: sai no lugar do Nome na proposta impressa, no PDF enviado e na página de aprovação do cliente' },
+      { name: 'descricao', label: 'Descrição', type: 'textarea', readOnly: true, searchable: true },
+      { name: 'preco_tabela', label: 'Preço de Venda', type: 'decimal', scale: 2, readOnly: true, listed: true, filterable: true, coluna: 'preco_venda' },
+      {
+        name: 'unidade_medida',
+        label: 'Unidade',
+        type: 'text',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: '(SELECT um.sigla FROM cad_produtos_unidades_medida um WHERE um.id = t.unidade_id)',
+      },
+      { name: 'servico', label: 'Serviço', type: 'boolean', readOnly: true, listed: true, filterable: true, width: 'xs' },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', readOnly: true, listed: true, filterable: true },
+      { name: 'fotos', label: 'Fotos', type: 'fotos', sql: FOTOS_SQL, hint: 'Até 4 fotos, do computador ou da internet' },
+      ...CRIADO_ATUALIZADO_ERP,
+    ],
+  },
+  {
+    // Condições de pagamento: os prazos geram as parcelas da proposta (vencimento, forma e valor)
+    name: 'condicoes_pagamento',
+    table: 'crm_condicoes_pagamento',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Condições de Pagamento',
+    labelSingular: 'Condição de Pagamento',
+    description: 'Prazos e forma de pagamento: na proposta, geram as parcelas com vencimento e valor',
+    icon: 'CreditCard',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100, hint: 'Como aparece na proposta (ex.: Entrada + 30/60 dias)' },
+      {
+        name: 'prazos',
+        label: 'Prazos (dias)',
+        type: 'text',
+        required: true,
+        listed: true,
+        maxLength: 100,
+        placeholder: '0/30/60',
+        hint: 'Dias de cada parcela a partir da data da proposta, separados por "/": 0 = à vista; 30/60/90 = três parcelas',
+      },
+      { name: 'forma_pagamento', label: 'Forma de Pagamento', type: 'enum', required: true, listed: true, filterable: true, options: FORMAS_PAGAMENTO.map((f) => ({ value: f, label: f })), default: 'Boleto', hint: 'Forma padrão das parcelas (pode ser trocada em cada parcela na proposta)' },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, filterable: true, default: true, width: 'xs' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    // Grupo de produtos: na impressão resumida da proposta/pedido, os itens do grupo saem numa linha só
+    // Categorias de produto do ERP (cad_produtos_categorias): só consulta; são mantidas no ERP
+    name: 'produtos_grupos',
+    table: 'cad_produtos_categorias',
+    scopeSql: DO_GRUPO('t.grupo_id'),
+    label: 'Grupos de Produtos',
+    labelSingular: 'Grupo de Produtos',
+    description: 'Categorias de produto do ERP: agrupam os produtos na impressão resumida da proposta e do pedido',
+    icon: 'Layers',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    details: [{ resource: 'produtos', foreignKey: 'grupo_id', label: 'Produtos do Grupo' }],
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', readOnly: true, listed: true, searchable: true, hint: 'Como sai na proposta/pedido resumido' },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', readOnly: true, listed: true, filterable: true, width: 'xs' },
+      ...CRIADO_ATUALIZADO_ERP,
+    ],
+  },
+  {
+    name: 'funis',
+    table: 'crm_funis',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Funis de Vendas',
+    labelSingular: 'Funil',
+    description: 'Pipelines de vendas',
+    icon: 'Filter',
+    group: 'cadastros',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'ordem', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    // Etapas não têm menu próprio: são mantidas aqui, no detalhe do funil
+    details: [{ resource: 'etapas', foreignKey: 'funil_id', label: 'Etapas', editavel: true }],
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100 },
+      { name: 'ordem', label: 'Ordem', type: 'number', listed: true, width: 'xs' },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', listed: true, filterable: true },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+  {
+    name: 'etapas',
+    table: 'crm_etapas',
+    scopeSql: 't.funil_id IN (SELECT id FROM crm_funis WHERE empresa_id = ?)',
+    label: 'Etapas do Funil',
+    labelSingular: 'Etapa',
+    description: 'Colunas do Kanban de cada funil',
+    icon: 'Columns3',
+    group: 'cadastros',
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    optionsSql:
+      "SELECT e.id AS value, CONCAT(f.nome, ' › ', e.nome) AS label FROM crm_etapas e JOIN crm_funis f ON f.id = e.funil_id WHERE f.empresa_id = ? ORDER BY f.ordem, f.nome, e.ordem LIMIT 1000",
+    defaultSort: { field: 'ordem', dir: 'asc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'funil_id', label: 'Funil', type: 'text', required: true, listed: true, filterable: true, ref: { resource: 'funis', labelField: 'nome' } },
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100 },
+      { name: 'ordem', label: 'Ordem', type: 'number', listed: true, width: 'xs' },
+      { name: 'probabilidade', label: 'Probabilidade (%)', type: 'decimal', scale: 2, listed: true, default: '100.00' },
+      { name: 'cor', label: 'Cor', type: 'cor', listed: true, width: 'xs', hint: 'Faixa no topo da coluna do Kanban' },
+      ...CRIADO_ATUALIZADO,
+    ],
+  },
+
+  // ============================================================
+  // MARKETING (campanhas: server/campanhas.ts)
+  // ============================================================
+  {
+    name: 'campanhas',
+    table: 'crm_campanhas',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ? AND t.excluida_em IS NULL',
+    exclusaoLogica: 'excluida_em',
+    label: 'Campanhas',
+    labelSingular: 'Campanha',
+    description: 'Público por critérios, mensagem personalizada e disparos: outro público ou outro texto, outra campanha',
+    icon: 'Megaphone',
+    group: 'marketing',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'id', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 150 },
+      { name: 'objetivo', label: 'Objetivo', type: 'enum', required: true, listed: true, filterable: true, options: OBJETIVOS_CAMPANHA, default: 'conversao' },
+      {
+        name: 'canal',
+        label: 'Enviar por',
+        type: 'enum',
+        required: true,
+        listed: true,
+        filterable: true,
+        options: CANAIS_CAMPANHA,
+        default: 'whatsapp',
+        hint: 'Multicanal: WhatsApp para quem tem celular, e-mail para os demais',
+      },
+      { name: 'situacao', label: 'Situação', type: 'enum', required: true, listed: true, filterable: true, options: SITUACOES_CAMPANHA, default: 'rascunho' },
+      { name: 'criterios', label: 'Público (critérios)', type: 'criterios', required: true, hint: 'A pessoa entra no público quando atende a todos os critérios' },
+      { name: 'publico_estimado', label: 'Público', type: 'number', readOnly: true, listed: true, width: 'xs', hint: 'Pessoas que atendem aos critérios (recalculado ao gravar e ao gerar os disparos)' },
+      { name: 'assunto', label: 'Assunto', type: 'text', maxLength: 255, hint: 'Do e-mail; no WhatsApp vai em negrito no começo da mensagem' },
+      {
+        name: 'mensagem',
+        label: 'Mensagem',
+        type: 'textarea',
+        searchable: true,
+        hint: 'Variáveis: {{nome}}, {{primeiro_nome}}, {{email}}, {{telefone}}, {{cidade}}, {{ultima_compra}}, {{empresa}}',
+      },
+      {
+        name: 'instrucoes_ia',
+        label: 'Instruções para a IA',
+        type: 'textarea',
+        hint: 'Quem responder a esta campanha no WhatsApp das campanhas é atendido pela Automação das campanhas: a IA recebe a mensagem enviada e este texto (o que explicar, preços, condições, perguntas frequentes)',
+      },
+      {
+        name: 'imagem',
+        label: 'Imagem',
+        type: 'imagem',
+        imagemOriginal: true,
+        hint: 'Opcional (PNG, JPEG ou WebP): vai no tamanho original até ~1,3 MB; maior que isso, é reduzida para 1600 px. No WhatsApp vai com a mensagem de legenda; no e-mail, como anexo',
+      },
+      {
+        name: 'enviar_a_partir_de',
+        label: 'Enviar a partir de',
+        type: 'datetime',
+        listed: true,
+        hint: 'Em branco: o envio começa assim que os disparos forem gerados',
+      },
+      { name: 'descricao', label: 'Descrição', type: 'textarea', searchable: true },
+      {
+        name: 'qtd_disparos',
+        label: 'Disparos',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: '(SELECT COUNT(*) FROM crm_campanha_disparos d WHERE d.campanha_id = t.id)',
+      },
+      {
+        name: 'qtd_pendentes',
+        label: 'Pendentes',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: "(SELECT COUNT(*) FROM crm_campanha_disparos d WHERE d.campanha_id = t.id AND d.situacao = 'pendente')",
+      },
+      {
+        name: 'qtd_enviados',
+        label: 'Enviados',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: "(SELECT COUNT(*) FROM crm_campanha_disparos d WHERE d.campanha_id = t.id AND d.situacao IN ('enviado', 'entregue', 'lido'))",
+      },
+      {
+        name: 'qtd_responderam',
+        label: 'Responderam',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: '(SELECT COUNT(*) FROM crm_campanha_disparos d WHERE d.campanha_id = t.id AND d.respondido_em IS NOT NULL)',
+      },
+      {
+        name: 'qtd_nao_respondidos',
+        label: 'Não respondidos',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: `(SELECT COUNT(*) FROM crm_campanha_disparos d WHERE d.campanha_id = t.id AND d.canal = 'whatsapp' AND d.respondido_em IS NOT NULL AND NOT ${equipeRespondeu('d')})`,
+      },
+      {
+        name: 'qtd_leads',
+        label: 'Leads',
+        type: 'number',
+        readOnly: true,
+        listed: true,
+        width: 'xs',
+        sql: "(SELECT COUNT(*) FROM crm_negocios n WHERE n.campanha_id = t.id AND n.status <> 'excluido')",
+      },
+      { name: 'iniciada_em', label: 'Iniciada em', type: 'datetime', readOnly: true, listed: true, filterable: true },
+      { name: 'encerrada_em', label: 'Encerrada em', type: 'datetime', readOnly: true, listed: true },
+      { name: 'criada_por', label: 'Criada por', type: 'text', readOnly: true, ref: { resource: 'usuarios', labelField: 'nome' } },
+      { name: 'criada_em', label: 'Criada em', type: 'datetime', readOnly: true },
+      { name: 'atualizada_em', label: 'Atualizada em', type: 'datetime', readOnly: true },
+    ],
+  },
+  {
+    // Vendas de produtos vindas do ERP (uma linha por produto de cada NF): base para campanhas e análises
+    name: 'vendas_produtos',
+    table: 'crm_vendas_produtos',
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Vendas',
+    labelSingular: 'Venda',
+    description: 'Produtos vendidos (do ERP): nota, cliente, produto, quantidade, preço e custo',
+    icon: 'Receipt',
+    group: 'marketing',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'pro_descricao',
+    defaultSort: { field: 'nf_data', dir: 'desc' },
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    fields: [
+      ID,
+      { name: 'nf_data', label: 'Data', type: 'date', required: true, listed: true, filterable: true },
+      { name: 'nf_numero', label: 'Nº da NF', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 20, hint: 'Número da NF ou de outro documento de venda' },
+      { name: 'cod_integracao', label: 'Cód. integração (NF)', type: 'text', searchable: true, filterable: true, maxLength: 50, hint: 'ID da NF no ERP' },
+      { name: 'nf_cfop', label: 'CFOP', type: 'text', listed: true, filterable: true, maxLength: 5, width: 'xs' },
+      { name: 'cli_cnpj', label: 'CNPJ/CPF', type: 'cnpj', listed: true, searchable: true, filterable: true },
+      { name: 'cli_nome', label: 'Cliente (NF)', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50, hint: 'Nome do cliente na nota' },
+      {
+        name: 'cliente',
+        label: 'Cliente',
+        type: 'text',
+        listed: true,
+        readOnly: true,
+        // A Pessoa do CRM com o mesmo CNPJ/CPF (vazio se o cliente não está cadastrado)
+        // COLLATE: a vendas_produtos foi criada com utf8mb4_0900_ai_ci e pessoas é utf8mb4_unicode_ci
+        sql: `(SELECT p.nome FROM ${PESSOAS} p WHERE p.cpf = t.cli_cnpj COLLATE utf8mb4_unicode_ci AND t.cli_cnpj <> '' ORDER BY p.id LIMIT 1)`,
+      },
+      { name: 'cli_cidade', label: 'Cidade', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
+      { name: 'cli_uf', label: 'UF', type: 'text', listed: true, filterable: true, maxLength: 2, width: 'xs', default: 'SC' },
+      { name: 'cli_bairro', label: 'Bairro', type: 'text', searchable: true, filterable: true, maxLength: 50 },
+      { name: 'nf_valor_total', label: 'Total da NF', type: 'decimal', scale: 2 },
+      { name: 'ven_nome', label: 'Vendedor', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
+      { name: 'ven_cod_integracao', label: 'Cód. integração (vendedor)', type: 'text', searchable: true, filterable: true, maxLength: 50, hint: 'ID do vendedor no ERP' },
+      { name: 'pro_cod_integracao', label: 'Cód. integração (produto)', type: 'text', searchable: true, filterable: true, maxLength: 50, hint: 'ID do produto no ERP' },
+      { name: 'pro_descricao', label: 'Produto', type: 'text', required: true, listed: true, searchable: true, filterable: true, maxLength: 255, span: 2 },
+      { name: 'pro_marca', label: 'Marca', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
+      { name: 'pro_classe', label: 'Classe', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
+      { name: 'pro_classe_descricao', label: 'Descrição da classe', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
+      { name: 'pro_qtdade', label: 'Quantidade', type: 'decimal', scale: 3, listed: true },
+      { name: 'pro_un', label: 'Un.', type: 'text', listed: true, maxLength: 3, width: 'xs' },
+      { name: 'pro_preco_venda', label: 'Preço de venda', type: 'decimal', scale: 2, listed: true },
+      { name: 'pro_valor_total', label: 'Total do produto', type: 'decimal', scale: 2, listed: true },
+      { name: 'pro_custo_unit', label: 'Custo unitário', type: 'decimal', scale: 2 },
+      // char(1) 'S'/'N' no banco (como no bmsoft)
+      { name: 'cancelado', label: 'Cancelado', type: 'boolean', listed: true, filterable: true, width: 'xs', simNao: true, sql: "IF(t.cancelado = 'S', 1, 0)" },
+    ],
+  },
+  {
+    // Gerados pelo "Gerar disparos" da campanha (server/campanhas.ts), já com destino e texto personalizados;
+    // a situação muda pelo envio (WhatsApp: server/whatsapp.ts; e-mail: server/campanhas.ts)
+    name: 'campanha_disparos',
+    table: 'crm_campanha_disparos',
+    scopeSql: 't.campanha_id IN (SELECT id FROM crm_campanhas WHERE empresa_id = ? AND excluida_em IS NULL)',
+    label: 'Disparos',
+    labelSingular: 'Disparo',
+    description: 'Mensagens das campanhas, uma por pessoa, com o destino e a situação do envio',
+    icon: 'Send',
+    group: 'marketing',
+    // Aba da tela de Campanhas (abas MDI), não opção do menu: o acesso é o de Campanhas (server/crud.ts)
+    oculto: true,
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    defaultSort: { field: 'id', dir: 'desc' },
+    canCreate: false,
+    canUpdate: false,
+    canDelete: false,
+    fields: [
+      ID,
+      { name: 'campanha_id', label: 'Campanha', type: 'text', listed: true, filterable: true, ref: { resource: 'campanhas', labelField: 'nome' } },
+      { name: 'pessoa_id', label: 'Pessoa', type: 'number' },
+      { name: 'nome', label: 'Cliente', type: 'text', listed: true, searchable: true },
+      { name: 'canal', label: 'Enviar por', type: 'enum', listed: true, filterable: true, options: CANAIS_DISPARO, width: 'xs' },
+      { name: 'destino', label: 'Celular / e-mail', type: 'text', listed: true, searchable: true },
+      {
+        name: 'situacao',
+        label: 'Situação',
+        type: 'enum',
+        listed: true,
+        filterable: true,
+        options: SITUACOES_DISPARO,
+        // WhatsApp que a pessoa respondeu: "Respondido" se alguém da equipe escreveu depois, senão "Não respondido"
+        sql: `IF(t.canal = 'whatsapp' AND t.respondido_em IS NOT NULL, IF(${equipeRespondeu('t')}, 'respondido', 'nao_respondido'), t.situacao)`,
+      },
+      { name: 'agendado_para', label: 'Agendado para', type: 'datetime', listed: true, filterable: true },
+      { name: 'enviado_em', label: 'Enviado em', type: 'datetime', listed: true },
+      { name: 'entregue_em', label: 'Entregue em', type: 'datetime' },
+      { name: 'lido_em', label: 'Lido em', type: 'datetime', listed: true },
+      { name: 'respondido_em', label: 'Respondeu em', type: 'datetime', listed: true, filterable: true },
+      { name: 'erro', label: 'Erro', type: 'text', listed: true },
+      { name: 'assunto', label: 'Assunto', type: 'text' },
+      { name: 'mensagem', label: 'Mensagem', type: 'textarea' },
+    ],
+  },
+
+  // ============================================================
+  // ACESSO
+  // ============================================================
+  {
+    // Usuários do ERP liberados na filial (sys_usuarios + perfil do CRM em crm_usuarios). Incluir, excluir, login e
+    // senha ficam no ERP; aqui se alteram os dados do usuário e o perfil dele no CRM (server/crud.ts grava nas duas)
+    name: 'usuarios',
+    table: USUARIOS_FILIAL,
+    tenantColumn: 'empresa_id',
+    scopeSql: 't.empresa_id = ?',
+    label: 'Usuários',
+    labelSingular: 'Usuário',
+    description: 'Usuários do ERP liberados nesta filial e o perfil de cada um no CRM',
+    icon: 'KeyRound',
+    group: 'acesso',
+    pk: ['id'],
+    autoIncrement: true,
+    labelField: 'nome',
+    // Combos de proprietário/envolvidos: os inativos vêm marcados e no fim, para as
+    // listas continuarem mostrando o nome de quem saiu
+    optionsSql: `SELECT t.id AS value, CONCAT(t.nome, IF(t.ativo = 1, '', ' (inativo)')) AS label
+                   FROM ${USUARIOS_FILIAL} t WHERE t.empresa_id = ? ORDER BY t.ativo DESC, t.nome LIMIT 1000`,
+    defaultSort: { field: 'nome', dir: 'asc' },
+    canCreate: false,
+    canUpdate: true,
+    canDelete: false,
+    fields: [
+      { name: 'id', label: 'ID', type: 'number', readOnly: true, listed: true, width: 'xs' },
+      { name: 'login', label: 'Login', type: 'text', readOnly: true, listed: true, searchable: true, width: 'sm' },
+      { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 150 },
+      { name: 'sigla', label: 'Sigla', type: 'text', listed: true, maxLength: 5, width: 'xs', hint: 'Abreviação do usuário (ex.: as iniciais)' },
+      { name: 'email', label: 'E-mail', type: 'text', listed: true, searchable: true, maxLength: 150 },
+      { name: 'telefone', label: 'WhatsApp', type: 'text', listed: true, maxLength: 20, hint: 'Com DDD: recebe os lembretes das atividades dos negócios dele' },
+      { name: 'cargo', label: 'Cargo', type: 'text', listed: true, maxLength: 80 },
+      { name: 'departamento_id', label: 'Departamento', type: 'text', listed: true, filterable: true, ref: { resource: 'departamentos', labelField: 'nome' } },
+      { name: 'tipo', label: 'Perfil', type: 'enum', required: true, listed: true, filterable: true, options: PERFIS, default: 'client', hint: 'Administrador acessa tudo; os demais, o que estiver liberado em Permissões' },
+      {
+        name: 'revezamento',
+        label: 'Entra no revezamento de leads',
+        type: 'boolean',
+        listed: true,
+        filterable: true,
+        default: false,
+        hint: 'Leads novos da automação vão, um de cada vez, para quem tem isto ligado',
+      },
+      { name: 'ativo', label: 'Ativo', type: 'boolean', readOnly: true, listed: true, filterable: true, hint: 'Ativado e desativado no ERP' },
+    ],
+  },
+];
+
+export const RESOURCE_MAP: Record<string, ResourceDef> = Object.fromEntries(
+  RESOURCES.map((r) => [r.name, r]),
+);
+
+export function getResource(name: string): ResourceDef | null {
+  return Object.prototype.hasOwnProperty.call(RESOURCE_MAP, name) ? RESOURCE_MAP[name] : null;
+}
+
+/** Colunas graváveis: exclui readOnly, a PK e a coluna do tenant (esta vem da sessão) */
+export function writableFields(resource: ResourceDef): FieldDef[] {
+  return resource.fields.filter((f) => !f.readOnly && !resource.pk.includes(f.name) && f.name !== resource.tenantColumn);
+}
+
+/** Expressão SQL da coluna: a própria coluna da tabela ou a expressão da coluna calculada */
+export function colunaSql(resource: ResourceDef, nome: string): string {
+  const f = resource.fields.find((x) => x.name === nome);
+  return f?.sql ?? `t.${f?.coluna ?? nome}`;
+}
+
+/** Campos com outro nome na tabela, para o SELECT: ", t.cpf_cnpj AS cpf" */
+export const apelidos = (resource: ResourceDef) =>
+  resource.fields.filter((f) => f.coluna && !f.sql).map((f) => `, t.${f.coluna} AS ${f.name}`).join('');
+
+/** Payload com os nomes dos campos → com as colunas de verdade */
+export function paraColunas(resource: ResourceDef, payload: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(payload).map(([k, v]) => [resource.fields.find((f) => f.name === k)?.coluna ?? k, v]));
+}
+
+/** Todas as colunas conhecidas — whitelist de ordenação e filtros */
+export function columnNames(resource: ResourceDef): string[] {
+  return resource.fields.map((f) => f.name);
+}
