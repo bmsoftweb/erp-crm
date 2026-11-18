@@ -746,6 +746,8 @@ export interface MensagemNova {
   empresaId: number;
   telefone: string;
   id: number;
+  /** Áudio recebido: a mensagem como veio no aviso (key + message), para baixar o arquivo sem depender do que a Evolution guardou */
+  midia?: any;
 }
 
 /** Aviso de mensagem nova (recebida, ou enviada pelo celular/pelo CRM). Devolve a recebida nova, se for o caso */
@@ -797,7 +799,8 @@ async function gravarMensagem(empresaId: number, d: any): Promise<MensagemNova |
     ],
   );
   // affectedRows 1 = linha nova (2/0 = aviso repetido de uma que já estava gravada)
-  return recebida && r.affectedRows === 1 ? { empresaId, telefone, id: r.insertId } : null;
+  if (!(recebida && r.affectedRows === 1)) return null;
+  return { empresaId, telefone, id: r.insertId, ...(c.tipo === 'audio' && { midia: { key, message: d.message } }) };
 }
 
 /** Situação que a Evolution informa (texto, ou o número do Baileys) → a da tabela */
@@ -1002,13 +1005,13 @@ export async function conectarWhatsApp(empresaId: string, conta: ContaWhats = 'p
  * Arquivo de uma mensagem (imagem, figurinha, áudio, vídeo) pelo id no WhatsApp. Evolution: baixa e decifra
  * pelo chat/getBase64FromMediaMessage; o CRM não guarda o arquivo.
  */
-export async function midiaDaMensagem(empresaId: string | number, waId: string, telefone?: string, conta?: ContaWhats): Promise<{ mimetype: string; dados: Buffer }> {
+export async function midiaDaMensagem(empresaId: string | number, waId: string, telefone?: string, conta?: ContaWhats, bruta?: any): Promise<{ mimetype: string; dados: Buffer }> {
   // A mídia fica na instância que enviou ou recebeu: a informada (ex.: campanha) ou a do número da conversa
   const c = conta ? await credenciaisDaConta(empresaId, conta) : telefone ? await credenciaisPara(empresaId, telefone) : await credenciais(empresaId);
   if (c.provedor !== 'evolution') throw new Error('Imagens das mensagens só pela Evolution.');
   const { url, headers } = endereco(c, { zapi: '', evolution: 'chat/getBase64FromMediaMessage' });
   const r: any = await (
-    await requisitar(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ message: { key: { id: waId } }, convertToMp4: false }) })
+    await requisitar(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ message: bruta?.message ? bruta : { key: { id: waId } }, convertToMp4: false }) })
   ).json();
   if (!r?.base64) throw new Error('Arquivo da mensagem não encontrado no WhatsApp.');
   return { mimetype: String(r.mimetype || 'application/octet-stream').split(';')[0], dados: Buffer.from(r.base64, 'base64') };

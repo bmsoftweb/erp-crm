@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.204 — 2026-11-18
+
+- Automação: o áudio do cliente é baixado com a mensagem completa que chega no aviso da Evolution (não depende mais de a Evolution ter guardado a mensagem), e a transcrição funciona.
+
 ## 0.0.203 — 2026-11-18
 
 - Automação: áudio do cliente é transcrito (pelo Gemini, com a chave dele em Configurações › IA mesmo com outra IA escolhida) e lido como se ele tivesse digitado; o texto fica gravado na mensagem, então perguntas, IA e Registrar pedido entendem o que foi falado. Sem a chave do Gemini ou se a transcrição falhar, o bot pede para escrever e continua no mesmo passo.

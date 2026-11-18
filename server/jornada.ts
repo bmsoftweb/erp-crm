@@ -1079,10 +1079,10 @@ async function comTrava(empresaId: number, telefone: string, fn: () => Promise<v
 const SEM_AUDIO = 'Não consegui ouvir o seu áudio. Pode escrever, por favor?';
 
 /** Áudio do cliente → texto (pelo Gemini), para a jornada ler como se ele tivesse digitado. '' quando não deu */
-async function transcrever(bot: ConfigChatbot | null, empresaId: number, telefone: string, waId: string, conta: ContaWhats): Promise<string> {
+async function transcrever(bot: ConfigChatbot | null, empresaId: number, telefone: string, waId: string, conta: ContaWhats, bruta?: any): Promise<string> {
   if (!bot || !waId) return '';
   try {
-    const { mimetype, dados } = await midiaDaMensagem(empresaId, waId, telefone, conta);
+    const { mimetype, dados } = await midiaDaMensagem(empresaId, waId, telefone, conta, bruta);
     const r = await ouvirAudio(bot, dados, mimetype, 'Transcreva este áudio de um cliente no WhatsApp, em português, exatamente como foi dito. Responda só com JSON: {"texto": "..."} (texto vazio se não der para entender).');
     return String(JSON.parse(/\{[\s\S]*\}/.exec(r)?.[0] ?? '{}').texto ?? '').trim().slice(0, 4000);
   } catch (err: any) {
@@ -1102,7 +1102,7 @@ export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot:
     let entrada = m[0]?.tipo === 'texto' ? String(m[0].texto ?? '').trim() : '';
     const audio = m[0]?.tipo === 'audio';
     if (audio) {
-      entrada = await transcrever(bot, nova.empresaId, nova.telefone, m[0].wa_id, conta);
+      entrada = await transcrever(bot, nova.empresaId, nova.telefone, m[0].wa_id, conta, nova.midia);
       // Gravada na mensagem: o histórico (IA, pedido) passa a ler "[áudio] <o que foi dito>"
       if (entrada) await pool.query('UPDATE crm_whatsapp_mensagens SET texto = ? WHERE id = ?', [entrada, nova.id]);
     }
