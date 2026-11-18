@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.213 — 2026-11-18
+
+- Automação (Registrar pedido): "não" ou "pode encerrar" com o resumo vazio (tudo sem estoque) sai por "cliente desistiu", em vez de repetir o resumo até dar erro.
+- Automação (Registrar pedido): foto de produto sem saldo na filial vai com "Sem estoque no momento." embaixo do nome.
+
 ## 0.0.212 — 2026-11-18
 
 - Automação: conversa que já começa dizendo o que quer (texto ou áudio, ex.: "quero duas águas") segue direto pela opção do primeiro menu, sem mandar o menu; saudações continuam recebendo o menu.

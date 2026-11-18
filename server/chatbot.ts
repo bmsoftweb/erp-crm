@@ -642,8 +642,8 @@ export interface PropostaPedido {
   semEstoque: { item: ItemPedido; disponivel: number; opcoes: ItemPedido[] }[];
   /** Sugestões do cadastro (venda casada) para os itens, com saldo; só quando nada está pendente */
   sugestoes: ItemPedido[];
-  /** Produtos de que o cliente pediu foto na última mensagem */
-  fotos: { produto_id: number; nome: string }[];
+  /** Produtos de que o cliente pediu foto na última mensagem (semEstoque: sem saldo na filial, avisa na legenda) */
+  fotos: { produto_id: number; nome: string; semEstoque?: boolean }[];
 }
 type ProdutoCadastro = { id: number; nome: string; codigo_sku: string | null; preco_tabela: unknown; servico?: unknown };
 export interface OpcoesPedido {
@@ -793,6 +793,11 @@ ${conversa}`,
     .filter((c): c is ProdutoCadastro => Boolean(c))
     .slice(0, 3)
     .map((c) => ({ produto_id: Number(c.id), nome: c.nome }));
+  // Foto de produto sem saldo: a legenda avisa, para o cliente não pedir e só depois saber que não tem
+  if (op.estoque !== false && res.fotos.length) {
+    const saldo = await disponivelNaFilial(res.fotos.map((f) => f.produto_id), empresaId);
+    for (const f of res.fotos) f.semEstoque = !temSaldo(doCadastro.get(f.produto_id) ?? {}, saldo.get(f.produto_id), 1);
+  }
   for (const i of (Array.isArray(j.itens) ? j.itens : []).slice(0, 30)) {
     const texto = String(i?.texto ?? '').trim().slice(0, 200);
     const quantidade = Math.round(Number(i?.quantidade) * 1000) / 1000;

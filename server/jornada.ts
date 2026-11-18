@@ -837,7 +837,9 @@ class Execucao {
         extras: visto ? produtosDoResumo(visto) : [],
       });
       if (visto && p.situacao === 'cancelou') return sair('cancelado');
-      if (visto && p.situacao === 'confirmou' && visto.itens.length && !pedidoPendente(visto)) {
+      if (visto && p.situacao === 'confirmou' && !pedidoPendente(visto)) {
+        // "Não, pode encerrar" com o resumo vazio (tudo sem estoque): não há o que gravar, o cliente desistiu
+        if (!visto.itens.length) return sair('cancelado');
         await this.gravarPedido(no, visto);
         return sair('sucesso');
       }
@@ -878,7 +880,8 @@ class Execucao {
         const mimetype = (resp.headers.get('content-type') || '').split(';')[0];
         const dados = Buffer.from(await resp.arrayBuffer());
         if (!resp.ok || !mimetype.startsWith('image/') || dados.length > MAX_ARQUIVO) throw new Error(`a foto não abriu (HTTP ${resp.status})`);
-        await this.enviar(f.nome, { tipo: 'imagem', base64: dados.toString('base64'), mimetype, nome: `${f.produto_id}.jpg`, legenda: f.nome });
+        const legenda = f.semEstoque ? `${f.nome}\nSem estoque no momento.` : f.nome;
+        await this.enviar(legenda, { tipo: 'imagem', base64: dados.toString('base64'), mimetype, nome: `${f.produto_id}.jpg`, legenda });
       } catch (err: any) {
         if (err.message !== 'sem foto') console.error(`Jornada: foto do produto ${f.produto_id}: ${err.message}`);
         sem.push(f.nome);
