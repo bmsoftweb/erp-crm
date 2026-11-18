@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.203 — 2026-11-18
+
+- Automação: áudio do cliente é transcrito (pelo Gemini, com a chave dele em Configurações › IA mesmo com outra IA escolhida) e lido como se ele tivesse digitado; o texto fica gravado na mensagem, então perguntas, IA e Registrar pedido entendem o que foi falado. Sem a chave do Gemini ou se a transcrição falhar, o bot pede para escrever e continua no mesmo passo.
+
 ## 0.0.202 — 2026-11-18
 
 - Automação: botão "IA" (Configurações › Automação). Você escreve o que mudar, a IA lê a automação do quadro e devolve ela refeita, conferida pela mesma validação do Salvar (nada muda no WhatsApp até Salvar automação).

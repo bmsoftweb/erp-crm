@@ -4,7 +4,7 @@ import { Router, Request, Response } from 'express';
 import { pool } from './db.js';
 import { lerConfig, somenteAdmin } from './config.js';
 import { cifrar, decifrar } from './segredo.js';
-import { chaveTelefone, CONTATO_RECENTE, contaDaConversa, donoDoTelefone, PESSOA_RECENTE, enviarReservada, mostrarDigitando, reservarEnvio, type ArquivoEnvio, type ContaWhats, type MensagemNova } from './whatsapp.js';
+import { chaveTelefone, CONTATO_RECENTE, contaDaConversa, donoDoTelefone, PESSOA_RECENTE, enviarReservada, midiaDaMensagem, mostrarDigitando, reservarEnvio, type ArquivoEnvio, type ContaWhats, type MensagemNova } from './whatsapp.js';
 import { campanhaDaConversa, contextoDeCampanha } from './campanhas.js';
 import {
   avisarDepartamento,
@@ -19,6 +19,7 @@ import {
   temChave,
   marcarEvento,
   mudarAtendimento,
+  ouvirAudio,
   registrarLead,
   telefoneCadastro,
   type ConfigChatbot,
@@ -1075,6 +1076,21 @@ async function comTrava(empresaId: number, telefone: string, fn: () => Promise<v
   }
 }
 
+const SEM_AUDIO = 'Não consegui ouvir o seu áudio. Pode escrever, por favor?';
+
+/** Áudio do cliente → texto (pelo Gemini), para a jornada ler como se ele tivesse digitado. '' quando não deu */
+async function transcrever(bot: ConfigChatbot | null, empresaId: number, telefone: string, waId: string, conta: ContaWhats): Promise<string> {
+  if (!bot || !waId) return '';
+  try {
+    const { mimetype, dados } = await midiaDaMensagem(empresaId, waId, telefone, conta);
+    const r = await ouvirAudio(bot, dados, mimetype, 'Transcreva este áudio de um cliente no WhatsApp, em português, exatamente como foi dito. Responda só com JSON: {"texto": "..."} (texto vazio se não der para entender).');
+    return String(JSON.parse(/\{[\s\S]*\}/.exec(r)?.[0] ?? '{}').texto ?? '').trim().slice(0, 4000);
+  } catch (err: any) {
+    console.error(`Jornada: transcrição do áudio (${telefone}): ${err.message}`);
+    return '';
+  }
+}
+
 /** Mensagem recebida numa conversa atendida pela jornada (chamada pelo responderComBot) */
 export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot: ConfigChatbot | null, conta: ContaWhats = 'provedor'): Promise<void> {
   await comTrava(nova.empresaId, nova.telefone, async () => {
@@ -1082,8 +1098,14 @@ export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot:
     // Aviso repetido da Evolution, ou mensagem mais antiga que a última tratada
     if (Number(estado.vars._msg) >= nova.id) return;
     estado.vars._msg = nova.id;
-    const [m] = await pool.query<any[]>('SELECT tipo, texto FROM crm_whatsapp_mensagens WHERE id = ?', [nova.id]);
-    const entrada = m[0]?.tipo === 'texto' ? String(m[0].texto ?? '').trim() : '';
+    const [m] = await pool.query<any[]>('SELECT tipo, texto, wa_id FROM crm_whatsapp_mensagens WHERE id = ?', [nova.id]);
+    let entrada = m[0]?.tipo === 'texto' ? String(m[0].texto ?? '').trim() : '';
+    const audio = m[0]?.tipo === 'audio';
+    if (audio) {
+      entrada = await transcrever(bot, nova.empresaId, nova.telefone, m[0].wa_id, conta);
+      // Gravada na mensagem: o histórico (IA, pedido) passa a ler "[áudio] <o que foi dito>"
+      if (entrada) await pool.query('UPDATE crm_whatsapp_mensagens SET texto = ? WHERE id = ?', [entrada, nova.id]);
+    }
     estado.vars.mensagem = entrada;
 
     const inicio = jornada.nos.find((n) => n.tipo === 'inicio')!;
@@ -1100,6 +1122,9 @@ export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot:
         // Sem ponto na jornada, ou depois do Fim (ou de uma saída sem ligação): recomeça do Início
         estado.retomar = 'limpar';
         await exec.percorrer(inicio);
+      } else if (audio && !entrada) {
+        // Áudio que não deu para ouvir (sem a chave do Gemini, falha): pede por escrito e continua esperando no mesmo nó
+        await exec.enviar(SEM_AUDIO);
       } else {
         await exec.percorrer(await exec.responder(atual, entrada));
       }
