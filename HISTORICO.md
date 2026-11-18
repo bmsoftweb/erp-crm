@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.214 — 2026-11-18
+
+- Automação: foto mandada pelo cliente é lida pela IA (Gemini) e o que ela viu fica no texto da mensagem ("🔎 Na foto: ..."), junto da legenda, que agora também conta como mensagem.
+- Automação (Registrar pedido): produto pedido por foto ("quero um igual a este") ou pela foto da etiqueta (código de barras do cadastro) pede confirmação ("Pela sua foto, parece ser: ... É esse?") com parecidos e similares; confirmado, segue o pedido normal.
+
 ## 0.0.213 — 2026-11-18
 
 - Automação (Registrar pedido): "não" ou "pode encerrar" com o resumo vazio (tudo sem estoque) sai por "cliente desistiu", em vez de repetir o resumo até dar erro.

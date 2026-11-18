@@ -47,6 +47,11 @@ assert.match(resumoPedido({ itens: [], duvidas: [], faltou: [], semEstoque: [tor
 const comSugestao = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [], sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }] });
 assert.match(comSugestao, /Aproveite também:\n1\) OLEO 900ML — R\$ 8,50/);
 assert.match(comSugestao, /pode ser dos sugeridos/);
+// Pedido por foto: o achado primeiro, os parecidos depois, e pergunta se é esse
+const heineken = { produto_id: 70, nome: 'HEINEKEN 600ML', quantidade: 1, preco_unitario: 12.9 };
+const porFoto = resumoPedido({ itens: [], duvidas: [{ texto: 'cerveja da foto', quantidade: 1, foto: true, opcoes: [heineken, { ...heineken, produto_id: 71, nome: 'AMSTEL 600ML', preco_unitario: 9.9 }] }], faltou: [] });
+assert.strictEqual(porFoto, 'Pela sua foto, parece ser:\n1) HEINEKEN 600ML — R$ 12,90\n\nTambém tenho parecido:\n2) AMSTEL 600ML — R$ 9,90\n\nÉ esse? Se preferir um dos parecidos, me diga o número.');
+assert.match(resumoPedido({ itens: [], duvidas: [{ texto: 'x', quantidade: 1, foto: true, opcoes: [heineken] }], faltou: [] }), /1\) HEINEKEN 600ML — R\$ 12,90\n\nÉ esse\?$/);
 const comPedido = prepararJornada({ ...base, nos: [inicio, { id: 'pd', tipo: 'pedido', x: 0, y: 0, dados: { status: 'faturado' } }], ligacoes: [{ de: 'inicio', saida: 'proximo', para: 'pd' }] }, null);
 assert.strictEqual(comPedido.nos[1].dados.status, 'aguardando_aprovacao');
 

@@ -200,8 +200,8 @@ function clienteGemini(cfg: ConfigChatbot) {
 }
 
 /**
- * Ouve um áudio (ligação gravada) e devolve a resposta em texto (JSON). Sempre pelo Gemini, com a chave dele gravada
- * mesmo que a IA escolhida seja outra: o Claude e o DeepSeek não recebem áudio. Modelo sobrecarregado (503), no limite
+ * Ouve um áudio (ligação gravada, áudio do cliente) ou olha uma foto e devolve a resposta em texto (JSON). Sempre pelo
+ * Gemini, com a chave dele gravada mesmo que a IA escolhida seja outra: o Claude e o DeepSeek não recebem áudio. Modelo sobrecarregado (503), no limite
  * de uso (429) ou demorando: passa para o próximo Gemini da lista. Tudo em até ~90 s (a função na Vercel tem 120 s)
  */
 export async function ouvirAudio(cfg: ConfigChatbot, audio: Buffer, mimeType: string, instrucoes: string): Promise<string> {
@@ -634,8 +634,8 @@ export interface PropostaPedido {
   /** confirmou / cancelou: a última mensagem do cliente responde ao último resumo do pedido mandado pela empresa */
   situacao: 'pedindo' | 'confirmou' | 'cancelou';
   itens: ItemPedido[];
-  /** Itens que servem para mais de um produto: o cliente escolhe */
-  duvidas: { texto: string; quantidade: number; opcoes: ItemPedido[] }[];
+  /** Itens que servem para mais de um produto: o cliente escolhe. foto: pedido por foto, o 1º é o que a IA achou e o cliente confirma */
+  duvidas: { texto: string; quantidade: number; opcoes: ItemPedido[]; foto?: boolean }[];
   /** Pedidos sem produto no cadastro */
   faltou: string[];
   /** Itens sem saldo para a quantidade pedida (fora de itens), com os similares do cadastro que têm saldo */
@@ -645,7 +645,7 @@ export interface PropostaPedido {
   /** Produtos de que o cliente pediu foto na última mensagem (semEstoque: sem saldo na filial, avisa na legenda) */
   fotos: { produto_id: number; nome: string; semEstoque?: boolean }[];
 }
-type ProdutoCadastro = { id: number; nome: string; codigo_sku: string | null; preco_tabela: unknown; servico?: unknown };
+type ProdutoCadastro = { id: number; nome: string; codigo_sku: string | null; preco_tabela: unknown; servico?: unknown; codigo_barras?: string | null };
 export interface OpcoesPedido {
   /** Confere o saldo na filial (padrão: sim) */
   estoque?: boolean;
@@ -709,13 +709,18 @@ async function relacionados(tipo: 'similares' | 'sugestoes', ids: number[], empr
 }
 
 const PROMPT_PEDIDO = `Você monta o pedido de um cliente a partir de uma conversa de WhatsApp com a empresa, usando só os produtos do cadastro.
-Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>]}],"fotos":[<ids>]}
+Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>],"foto":<true|false>}],"fotos":[<ids>]}
 - itens: tudo o que o cliente quer comprar, já com as correções que ele fez na conversa (quantidade nova, item trocado ou
   retirado). Quantidade não dita = 1. Produto de que ele desistiu ou que só perguntou o preço não entra. Um item por produto.
 - produto_id: o produto do cadastro que é com certeza o que o cliente pediu. Aceite plural, erro de digitação, abreviação,
   apelido e marca (ex.: "breja" = cerveja, "coca" = Coca-Cola). Se a empresa mandou opções numeradas e o cliente escolheu, use a escolhida.
 - opcoes: quando o pedido serve para mais de um produto do cadastro e o cliente não disse qual (ex.: "cerveja" com várias
   cervejas no cadastro, "café" com café solúvel e torrado), produto_id null e de 2 a 6 ids possíveis. Não escolha pelo cliente. Sem produto parecido no cadastro: o item entra mesmo assim, com produto_id null e opcoes [] (o cliente fica sabendo que não tem).
+- foto: o cliente mandou foto do produto ou da etiqueta ("quero um igual a este", "tem esse?"; a mensagem traz "🔎 Na foto:"
+  com o que se vê nela). Enquanto ele não confirmar qual é: foto true, produto_id null e em opcoes de 1 a 6 ids, primeiro o
+  produto do cadastro mais parecido com a foto (código de barras igual é o mesmo produto) e depois os parecidos. Se ele
+  confirmar ("sim", "é esse", o número) ou escolher outro: foto false com o produto_id. Nada parecido no cadastro: opcoes [].
+  Item que não veio de foto: foto false.
 - situacao: "confirmou" se a ÚLTIMA mensagem do cliente aceita o último resumo do pedido mandado pela empresa, sem pedir
   mudança (ex.: "sim", "pode mandar", "confirmo", "pode encerrar", "pode fechar", "só isso", "é isso"). A empresa pergunta
   se pode encerrar ou se ele quer acrescentar mais itens: "não" (não quer mais nada) também é "confirmou", não "cancelou".
@@ -767,6 +772,16 @@ export async function pedidoDoTexto(conversa: string, empresaId: string | number
     }
     catalogo = [...porId.values()];
   }
+  // Código de barras na conversa (lido na foto da etiqueta, ou digitado): o produto entra no catálogo com o código, para a IA casar
+  const barras = [...new Set(conversa.match(/\b\d{8,14}\b/g) ?? [])].slice(0, 10);
+  const comBarras = new Set<number>();
+  if (barras.length) {
+    const [rows] = await pool.query<any[]>(`SELECT t.id, t.nome, t.codigo_sku, t.preco_tabela, t.servico, t.codigo_barras ${escopo} AND t.codigo_barras IN (?)`, [empresaId, barras]);
+    for (const p of rows) {
+      comBarras.add(Number(p.id));
+      catalogo = [...catalogo.filter((c) => Number(c.id) !== Number(p.id)), p];
+    }
+  }
 
   const r = await conversarIa(
     cfg,
@@ -775,7 +790,7 @@ export async function pedidoDoTexto(conversa: string, empresaId: string | number
       {
         de: 'pessoa',
         texto: `Cadastro de produtos ([id] nome — preço):
-${catalogo.map((c) => `[${c.id}] ${c.nome}${c.codigo_sku ? ` (cód. ${c.codigo_sku})` : ''} — R$ ${(Number(c.preco_tabela) || 0).toFixed(2)}`).join('\n') || '(nenhum produto parecido)'}
+${catalogo.map((c) => `[${c.id}] ${c.nome}${c.codigo_sku ? ` (cód. ${c.codigo_sku})` : ''}${comBarras.has(Number(c.id)) ? ` (cód. barras ${c.codigo_barras})` : ''} — R$ ${(Number(c.preco_tabela) || 0).toFixed(2)}`).join('\n') || '(nenhum produto parecido)'}
 
 Conversa:
 ${conversa}`,
@@ -807,6 +822,14 @@ ${conversa}`,
       .map((id: unknown) => doCadastro.get(Number(id)))
       .filter((c: ProdutoCadastro | undefined): c is ProdutoCadastro => Boolean(c))
       .slice(0, 6);
+    if (i?.foto === true && (certo || opcoes.length)) {
+      // Pedido por foto: nunca escolhe sozinho. O que a IA achou vem primeiro; completa com os similares do cadastro (com saldo)
+      const achados = [...new Map([certo, ...opcoes].filter((c): c is ProdutoCadastro => Boolean(c)).map((c) => [Number(c.id), c])).values()];
+      const similares = (await relacionados('similares', [Number(achados[0].id)], empresaId)).get(Number(achados[0].id)) ?? [];
+      const lista = [...achados.map((c) => item(c, quantidade)), ...similares.filter((s) => !achados.some((c) => Number(c.id) === s.produto_id)).map((s) => ({ ...s, quantidade }))];
+      res.duvidas.push({ texto: texto || achados[0].nome, quantidade, opcoes: lista.slice(0, 6), foto: true });
+      continue;
+    }
     const escolhido = certo ?? (opcoes.length === 1 ? opcoes[0] : null);
     if (escolhido) {
       // O mesmo produto duas vezes: vale o último (a IA já junta; aqui é só garantia)

@@ -48,7 +48,7 @@ export async function grupoDaFilial(empresaId: string | number): Promise<number>
 }
 
 /** cad_produtos como a antiga "produtos" (serviço = cad_produtos.servico = 1); grupo_id é a categoria, grupo_empresas_id o grupo de empresas */
-export const PRODUTOS = `(SELECT pr.id, pr.nome, pr.nome_proposta, pr.sku AS codigo_sku, pr.preco_venda AS preco_tabela,
+export const PRODUTOS = `(SELECT pr.id, pr.nome, pr.nome_proposta, pr.sku AS codigo_sku, pr.codigo_barras, pr.preco_venda AS preco_tabela,
         NULLIF(pr.categoria_id, 0) AS grupo_id, pr.unidade_id, um.sigla AS unidade_medida, pr.descricao, pr.servico, pr.ativo,
         pr.grupo_id AS grupo_empresas_id, pr.date_insert AS criado_em, pr.date_update AS atualizado_em
    FROM cad_produtos pr LEFT JOIN cad_produtos_unidades_medida um ON um.id = pr.unidade_id)`;

@@ -87,7 +87,12 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
     partes.push(`Confira o seu pedido:\n${p.itens.map(linhaPedido).join('\n')}\nTotal: ${reais(total)}`);
   }
   for (const d of p.duvidas) {
-    partes.push(`Sobre "${d.texto}" (${qtdTexto(d.quantidade)}), qual destes?\n${opcoesNumeradas(d.opcoes)}`);
+    const [achado, ...parecidos] = d.opcoes;
+    partes.push(
+      d.foto
+        ? `Pela sua foto, parece ser:\n${opcoesNumeradas([achado])}${parecidos.length ? `\n\nTambém tenho parecido:\n${opcoesNumeradas(d.opcoes).split('\n').slice(1).join('\n')}` : ''}`
+        : `Sobre "${d.texto}" (${qtdTexto(d.quantidade)}), qual destes?\n${opcoesNumeradas(d.opcoes)}`,
+    );
   }
   for (const f of p.semEstoque ?? []) {
     const aviso = f.disponivel > 0 ? `${f.item.nome}: só temos ${qtdTexto(f.disponivel)} no estoque (você pediu ${qtdTexto(f.item.quantidade)}).` : `${f.item.nome} está sem estoque.`;
@@ -95,9 +100,15 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
   }
   if (p.faltou.length) partes.push(`Não encontrei: ${p.faltou.join(', ')}.`);
   const pendente = pedidoPendente(p);
+  // Só falta confirmar o produto da foto: pergunta direto se é ele
+  const soFoto = p.duvidas.length === 1 && p.duvidas[0].foto && !pedidoPendente({ duvidas: [], semEstoque: p.semEstoque });
   if (!pendente && p.sugestoes?.length) partes.push(`Aproveite também:\n${opcoesNumeradas(p.sugestoes)}`);
   partes.push(
-    pendente
+    soFoto
+      ? p.duvidas[0].opcoes.length > 1
+        ? 'É esse? Se preferir um dos parecidos, me diga o número.'
+        : 'É esse?'
+      : pendente
       ? 'Me diga como você prefere (e se quer mudar mais alguma coisa).'
       : !p.itens.length
         ? 'Quer pedir outra coisa?'
@@ -1170,6 +1181,24 @@ async function transcrever(bot: ConfigChatbot | null, empresaId: number, telefon
   }
 }
 
+const PROMPT_FOTO = `Foto que um cliente mandou no WhatsApp para uma loja: pode ser um produto, a embalagem ou a etiqueta dele.
+Responda só com JSON: {"texto": "..."}, em uma linha, em português: o que é o produto (tipo, marca, modelo, medida/tamanho, cor,
+sabor) e, se aparecerem, o código de barras (só os dígitos, como "cód. barras 7891234567890") e os códigos de modelo ou
+referência da etiqueta. Não invente o que não dá para ver. Não é produto: descreva a foto em poucas palavras. Texto vazio se não der para ver.`;
+
+/** Foto do cliente → o que a IA viu nela (pelo Gemini), para a jornada e o pedido lerem. '' quando não deu */
+async function verFoto(bot: ConfigChatbot | null, empresaId: number, telefone: string, waId: string, conta: ContaWhats, bruta?: any): Promise<string> {
+  if (!bot || !waId) return '';
+  try {
+    const { mimetype, dados } = await midiaDaMensagem(empresaId, waId, telefone, conta, bruta);
+    const r = await ouvirAudio(bot, dados, mimetype, PROMPT_FOTO);
+    return String(JSON.parse(/\{[\s\S]*\}/.exec(r)?.[0] ?? '{}').texto ?? '').trim().slice(0, 1000);
+  } catch (err: any) {
+    console.error(`Jornada: leitura da foto (${telefone}): ${err.message}`);
+    return '';
+  }
+}
+
 /** Mensagem recebida numa conversa atendida pela jornada (chamada pelo responderComBot) */
 export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot: ConfigChatbot | null, conta: ContaWhats = 'provedor'): Promise<void> {
   await comTrava(nova.empresaId, nova.telefone, async () => {
@@ -1184,6 +1213,13 @@ export async function executarJornada(nova: MensagemNova, jornada: Jornada, bot:
       entrada = await transcrever(bot, nova.empresaId, nova.telefone, m[0].wa_id, conta, nova.midia);
       // Gravada na mensagem: o histórico (IA, pedido) passa a ler "[áudio] <o que foi dito>"
       if (entrada) await pool.query('UPDATE crm_whatsapp_mensagens SET texto = ? WHERE id = ?', [entrada, nova.id]);
+    }
+    if (m[0]?.tipo === 'imagem') {
+      // Legenda + o que a IA viu, gravados na mensagem: o histórico (IA, pedido) lê "[imagem] quero igual 🔎 Na foto: ..."
+      const legenda = String(m[0].texto ?? '').trim();
+      const viu = await verFoto(bot, nova.empresaId, nova.telefone, m[0].wa_id, conta, nova.midia);
+      entrada = [legenda, viu && `🔎 Na foto: ${viu}`].filter(Boolean).join('\n');
+      if (viu) await pool.query('UPDATE crm_whatsapp_mensagens SET texto = ? WHERE id = ?', [entrada, nova.id]);
     }
     estado.vars.mensagem = entrada;
 
