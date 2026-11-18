@@ -52,10 +52,10 @@ const texto = (v: any) => (v === undefined || v === null || String(v).trim() ===
 /** Empresa (tenant) do usuário logado, resolvida pelo middleware de sessão em server.ts */
 const empresaDa = (res: Response) => String(res.locals.empresaId);
 
-/** A pessoa (cadastro do ERP, de todas as filiais) precisa existir e não estar excluída */
-async function exigirPessoa(id: string | null, rotulo: string) {
+/** A pessoa (cadastro do ERP) precisa existir, não estar excluída e ser do grupo de empresas da filial */
+async function exigirPessoa(id: string | null, rotulo: string, emp: string) {
   if (!id) return;
-  const [rows] = await pool.query<any[]>(`SELECT 1 FROM ${PESSOAS} p WHERE p.id = ?`, [id]);
+  const [rows] = await pool.query<any[]>(`SELECT 1 FROM ${PESSOAS} p WHERE p.id = ? AND ${DO_GRUPO('p.grupo_id')}`, [id, emp]);
   if (!rows.length) throw new Error(`${rotulo} informado não existe no cadastro de pessoas.`);
 }
 
@@ -539,7 +539,7 @@ ${link}` : mensagem;
       if (!negocioId) throw new Error('Escolha o negócio da proposta.');
     }
     const vinc = await vinculosDoNegocio(negocioId, emp);
-    await exigirPessoa(texto(b.pessoa_id), 'O contato');
+    await exigirPessoa(texto(b.pessoa_id), 'O contato', emp);
     await exigirProdutosDaEmpresa(tot.linhas.map((l) => l.produto_id), emp);
     const validadeDias = Math.max(0, Math.trunc(num(b.validade_dias ?? 15)));
     const status = ['rascunho', 'enviada', 'recusada', 'expirada'].includes(b.status) ? b.status : 'rascunho';
@@ -754,7 +754,7 @@ ${link}` : mensagem;
     const parcelas = conferirParcelas(b.parcelas, tot.total);
     const negocioId = texto(b.negocio_id);
     const vinc = await vinculosDoNegocio(negocioId, emp);
-    await exigirPessoa(texto(b.pessoa_id), 'O contato');
+    await exigirPessoa(texto(b.pessoa_id), 'O contato', emp);
     await exigirProdutosDaEmpresa(tot.linhas.map((l) => l.produto_id), emp);
 
     const id = await transacao(async (conn) => {

@@ -5,7 +5,7 @@ import { enviarEmail } from './email.js';
 import { chaveTelefone, enviarWhatsAppCampanha, imagemDaCampanha, telefoneWhatsApp } from './whatsapp.js';
 import { lerConfig } from './config.js';
 import { ehSelecaoIa, gerarSelecaoIa, idsDaSelecaoIa, normalizarSelecaoIa, sqlExecutadoIa, type SelecaoIa } from './selecaoIa.js';
-import { EMPRESAS, PESSOAS } from './erp.js';
+import { DO_GRUPO, EMPRESAS, PESSOAS } from './erp.js';
 
 /**
  * Campanhas (tudo numa tabela só): o público vem dos critérios da campanha, a mensagem (com variáveis
@@ -195,13 +195,13 @@ export async function filtroPublico(bruto: unknown, empresaId: string | number):
   const sel = normalizarSelecao(bruto);
   if (Array.isArray(sel)) return sqlCriterios(sel, empresaId);
   const ids = await idsDaSelecaoIa(sel.sql, empresaId);
-  return { where: ids.length ? '? IS NOT NULL AND p.id IN (?)' : '0 = 1', params: ids.length ? [empresaId, ids] : [] };
+  return { where: ids.length ? `${DO_GRUPO('p.grupo_id')} AND p.id IN (?)` : '0 = 1', params: ids.length ? [empresaId, ids] : [] };
 }
 
 /** WHERE (sobre a pessoa "p") que seleciona as pessoas da empresa atendidas pelos critérios */
 export function sqlCriterios(criterios: Criterio[], empresaId: string | number): { where: string; params: any[] } {
-  // A pessoa é de todas as filiais (server/erp.ts): o ? da filial fica, sem filtrar
-  const partes = ['? IS NOT NULL'];
+  // Pessoas do grupo de empresas da filial
+  const partes = [DO_GRUPO('p.grupo_id')];
   const params: any[] = [empresaId];
   for (const c of criterios) {
     const regra = regraDe(c.regra)!;

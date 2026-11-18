@@ -22,7 +22,7 @@ function mascararPrivada<T extends Record<string, any>>(res: Response, m: T): T 
   return { ...m, privada: { ...privada, oculta: true }, texto: null, arquivo_nome: null };
 }
 import { ehCortesia, enviarPesquisa } from './pesquisa.js';
-import { CONTATOS, PESSOAS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
+import { CONTATOS, DO_GRUPO, PESSOAS, PESSOA_DO_GRUPO, USUARIOS, USUARIOS_FILIAL } from './erp.js';
 
 /** Começo do evento de transferência (para um atendente ou um departamento): /whatsapp/nao-vistas acha por ele a transferida para mim */
 const TRANSFERIDO_PARA = 'Transferido para ';
@@ -168,11 +168,11 @@ export function createConversasRouter(): Router {
       const [rows] = contatoId
         ? await pool.query<any[]>(
             `SELECT nome, COALESCE(NULLIF(whatsapp, ''), NULLIF(celular, ''), NULLIF(telefone, '')) AS fone
-               FROM ${CONTATOS} pessoas_contatos WHERE id = ? AND ? IS NOT NULL`,
+               FROM ${CONTATOS} pessoas_contatos WHERE id = ? AND ${PESSOA_DO_GRUPO('pessoa_id')}`,
             [contatoId, emp],
           )
         : await pool.query<any[]>(
-            `SELECT nome, COALESCE(NULLIF(whatsapp, ''), NULLIF(telefone, '')) AS fone FROM ${PESSOAS} pessoas WHERE id = ? AND ? IS NOT NULL`,
+            `SELECT nome, COALESCE(NULLIF(whatsapp, ''), NULLIF(telefone, '')) AS fone FROM ${PESSOAS} pessoas WHERE id = ? AND ${DO_GRUPO('grupo_id')}`,
             [pessoaId, emp],
           );
       const r = rows[0];
@@ -208,7 +208,7 @@ export function createConversasRouter(): Router {
       const cNum = digitos.length >= 4 ? [`%${digitos}%`, `%${digitos}%`, `%${digitos}%`] : [];
       const [pessoas] = await pool.query<any[]>(
         `SELECT id AS pessoa_id, nome, COALESCE(NULLIF(whatsapp, ''), NULLIF(telefone, '')) AS fone
-           FROM ${PESSOAS} pessoas WHERE ? IS NOT NULL AND (nome LIKE ? OR ${numero('whatsapp')} OR ${numero('telefone')})
+           FROM ${PESSOAS} pessoas WHERE ${DO_GRUPO('grupo_id')} AND (nome LIKE ? OR ${numero('whatsapp')} OR ${numero('telefone')})
           ORDER BY COALESCE(NULLIF(whatsapp, ''), NULLIF(telefone, '')) IS NULL, nome LIMIT 15`,
         [emp, nome, ...pNum],
       );
@@ -216,7 +216,7 @@ export function createConversasRouter(): Router {
         `SELECT c.id AS contato_id, c.pessoa_id, c.nome, p.nome AS pessoa_nome, COALESCE(c.departamento, c.cargo) AS setor,
                 COALESCE(NULLIF(c.whatsapp, ''), NULLIF(c.celular, ''), NULLIF(c.telefone, '')) AS fone
            FROM ${CONTATOS} c JOIN ${PESSOAS} p ON p.id = c.pessoa_id
-          WHERE ? IS NOT NULL AND c.ativo = 1 AND (c.nome LIKE ? OR p.nome LIKE ? OR ${numero('c.whatsapp')} OR ${numero('c.celular')} OR ${numero('c.telefone')})
+          WHERE ${DO_GRUPO('p.grupo_id')} AND c.ativo = 1 AND (c.nome LIKE ? OR p.nome LIKE ? OR ${numero('c.whatsapp')} OR ${numero('c.celular')} OR ${numero('c.telefone')})
           ORDER BY COALESCE(NULLIF(c.whatsapp, ''), NULLIF(c.celular, ''), NULLIF(c.telefone, '')) IS NULL, p.nome, c.principal DESC, c.nome LIMIT 15`,
         [emp, nome, nome, ...cNum],
       );
@@ -700,10 +700,10 @@ export function createConversasRouter(): Router {
           ORDER BY m.data_hora, m.id`,
         [res.locals.usuarioId, emp, telefone],
       );
-      const [pessoa] = pessoaId ? await pool.query<any[]>(`SELECT id, nome FROM ${PESSOAS} pessoas WHERE id = ? AND ? IS NOT NULL`, [pessoaId, emp]) : [[]];
+      const [pessoa] = pessoaId ? await pool.query<any[]>(`SELECT id, nome FROM ${PESSOAS} pessoas WHERE id = ? AND ${DO_GRUPO('grupo_id')}`, [pessoaId, emp]) : [[]];
       const [lead] = leadId ? await pool.query<any[]>('SELECT id, nome FROM crm_leads WHERE id = ? AND empresa_id = ?', [leadId, emp]) : [[]];
       const [contato] = contatoId
-        ? await pool.query<any[]>(`SELECT id, nome, cargo, departamento FROM ${CONTATOS} pessoas_contatos WHERE id = ? AND ? IS NOT NULL`, [contatoId, emp])
+        ? await pool.query<any[]>(`SELECT id, nome, cargo, departamento FROM ${CONTATOS} pessoas_contatos WHERE id = ? AND ${PESSOA_DO_GRUPO('pessoa_id')}`, [contatoId, emp])
         : [[]];
       // Situação do atendimento: com o bot (ou jornada), aguardando alguém atender ou em atendimento
       const chatbot: any = await lerConfig(String(emp), 'whatsapp', 'chatbot');

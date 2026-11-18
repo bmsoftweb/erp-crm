@@ -20,17 +20,18 @@ export interface SelecaoIa {
 
 /**
  * Tabelas que a IA conhece (seleção de campanha e Consultas), pelo nome que têm no CRM, e as linhas que cada uma mostra:
- * as da filial logada (emp). Os cadastros do ERP (pessoas, contatos, produtos) são de todas as filiais e ganham
- * empresa_id = a filial logada, para o SQL da IA poder filtrar empresa_id em toda tabela.
+ * as da filial logada (emp). Os cadastros do ERP (pessoas, contatos, produtos) são os do grupo de empresas da filial e
+ * ganham empresa_id = a filial logada, para o SQL da IA poder filtrar empresa_id em toda tabela.
  */
 const DO_CRM = (t: string) => (emp: number) => `SELECT * FROM crm_${t} WHERE empresa_id = ${emp}`;
 const FILHA = (t: string, fk: string, pai: string) => (emp: number) =>
   `SELECT * FROM crm_${t} WHERE ${fk} IN (SELECT id FROM crm_${pai} WHERE empresa_id = ${emp})`;
 const DO_ERP = (fonte: string) => (emp: number) => `SELECT x.*, ${emp} AS empresa_id FROM ${fonte} x`;
+const GRUPO = (emp: number) => `(SELECT grupo_id FROM sys_empresas WHERE id = ${emp})`;
 export const FONTES_IA: Record<string, (emp: number) => string> = {
-  pessoas: DO_ERP(PESSOAS),
-  pessoas_contatos: DO_ERP(CONTATOS),
-  produtos: (emp) => `${DO_ERP(PRODUTOS)(emp)} WHERE x.grupo_empresas_id = (SELECT grupo_id FROM sys_empresas WHERE id = ${emp})`,
+  pessoas: (emp) => `${DO_ERP(PESSOAS)(emp)} WHERE x.grupo_id = ${GRUPO(emp)}`,
+  pessoas_contatos: (emp) => `${DO_ERP(CONTATOS)(emp)} WHERE x.pessoa_id IN (SELECT id FROM cad_pessoas WHERE grupo_id = ${GRUPO(emp)})`,
+  produtos: (emp) => `${DO_ERP(PRODUTOS)(emp)} WHERE x.grupo_empresas_id = ${GRUPO(emp)}`,
   usuarios: (emp) => `SELECT * FROM ${USUARIOS_FILIAL} x WHERE x.empresa_id = ${emp}`,
   etapas: FILHA('etapas', 'funil_id', 'funis'),
   proposta_itens: FILHA('proposta_itens', 'proposta_id', 'propostas'),
@@ -105,7 +106,7 @@ export const ehSelecaoIa = (v: any): boolean => {
 export function sqlExecutadoIa(sqlIa: string, empresaId: string | number): string {
   const emp = Number(empresaId);
   const sql = isolarEmpresa(conferirSqlIa(sqlIa).replace(/:empresa\b/g, String(emp)), emp);
-  return `SELECT /*+ MAX_EXECUTION_TIME(${TEMPO_MS}) */ DISTINCT p.id FROM (${sql}) x JOIN ${PESSOAS} p ON p.id = x.id LIMIT ${MAX_PESSOAS_IA}`;
+  return `SELECT /*+ MAX_EXECUTION_TIME(${TEMPO_MS}) */ DISTINCT p.id FROM (${sql}) x JOIN ${PESSOAS} p ON p.id = x.id AND p.grupo_id = ${GRUPO(emp)} LIMIT ${MAX_PESSOAS_IA}`;
 }
 
 /** Palavras que não podem ser apelido de tabela (vêm logo depois do nome dela) */

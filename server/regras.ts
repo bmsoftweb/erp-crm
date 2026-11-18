@@ -40,9 +40,12 @@ export async function sincronizarNegocio(negocioId: string | null | undefined, d
  * para que funil e etapa nunca fiquem desencontrados.
  */
 export async function antesDeGravar(recurso: string, payload: Record<string, any>, empresaId?: string) {
-  // Contato: a pessoa precisa existir (o campo não é um vínculo escolhido na tela; a pessoa é de todas as filiais)
+  // Contato: a pessoa precisa existir e ser do grupo de empresas da filial (o campo não é um vínculo escolhido na tela)
   if (recurso === 'pessoas_contatos' && payload.pessoa_id != null) {
-    const [rows] = await pool.query<any[]>('SELECT 1 FROM cad_pessoas WHERE id = ? AND date_delete IS NULL', [payload.pessoa_id]);
+    const [rows] = await pool.query<any[]>(
+      'SELECT 1 FROM cad_pessoas WHERE id = ? AND date_delete IS NULL AND grupo_id = (SELECT eg.grupo_id FROM sys_empresas eg WHERE eg.id = ?)',
+      [payload.pessoa_id, empresaId ?? null],
+    );
     if (!rows.length) throw new Error('A pessoa do contato não existe.');
   }
   // Pessoa no cadastro do ERP: tipo lead/cliente = is_cliente; CPF/CNPJ só com dígitos, e ele diz se é física ou jurídica

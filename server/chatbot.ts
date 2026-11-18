@@ -1025,7 +1025,7 @@ async function dadosDoCliente(ctx: Contexto): Promise<string> {
   const { pessoa_id: pessoaId, contato_id: contatoId } = ctx.dono;
   if (!pessoaId) return 'Cliente ainda NÃO cadastrado no CRM (é um possível lead).';
   const emp = ctx.empresaId;
-  const [p] = await pool.query<any[]>(`SELECT nome, tipo FROM ${PESSOAS} pessoas WHERE id = ? AND ? IS NOT NULL`, [pessoaId, emp]);
+  const [p] = await pool.query<any[]>(`SELECT nome, tipo FROM ${PESSOAS} pessoas WHERE id = ? AND ${DO_GRUPO('grupo_id')}`, [pessoaId, emp]);
   const [c] = contatoId ? await pool.query<any[]>(`SELECT nome, cargo, departamento FROM ${CONTATOS} pessoas_contatos WHERE id = ?`, [contatoId]) : [[]];
   const [neg] = await pool.query<any[]>(
     `SELECT n.titulo, e.nome AS etapa, u.nome AS vendedor FROM crm_negocios n LEFT JOIN crm_etapas e ON e.id = n.etapa_id LEFT JOIN ${USUARIOS} u ON u.id = n.proprietario_id

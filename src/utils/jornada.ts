@@ -79,7 +79,7 @@ export const TIPOS_NO: Record<TipoNo, { nome: string; icone: LucideIcon; cor: st
     ajuda: 'A IA lê a conversa, acha no cadastro os produtos e as quantidades que o cliente pediu (sem nenhum, pergunta), manda o resumo e grava o pedido quando o cliente confirma. Espera a resposta.',
   },
   departamento: { nome: 'Departamento', icone: Network, cor: 'sky', ajuda: 'Passa para humano do departamento (atividade + aviso no WhatsApp).' },
-  fim: { nome: 'Fim', icone: Flag, cor: 'rose', ajuda: 'Encerra a automação (com uma mensagem opcional).' },
+  fim: { nome: 'Fim', icone: Flag, cor: 'rose', ajuda: 'Encerra a automação (com uma mensagem opcional). Se só o bot falou, o atendimento é encerrado; se alguém da equipe escreveu, fica aguardando a equipe encerrar.' },
 };
 
 /** Grupos da barra de nós do editor, na ordem (nó novo: incluir o tipo no grupo certo) */

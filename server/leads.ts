@@ -28,10 +28,10 @@ export async function converterLead(empresaId: number | string, leadId: number |
   if (l.pessoa_id) return Number(l.pessoa_id);
 
   const [r] = await db.query<any>(
-    `INSERT INTO cad_pessoas (is_cliente, nome, email_principal, fone_principal, whatsapp, observacoes, segmento_id, google_place_id, prospeccao_busca_id,
+    `INSERT INTO cad_pessoas (grupo_id, is_cliente, nome, email_principal, fone_principal, whatsapp, observacoes, segmento_id, google_place_id, prospeccao_busca_id,
                               nao_receber_campanhas, cidade_nome, cidade_uf)
-     VALUES (1, LEFT(?, 50), LEFT(?, 120), LEFT(?, 20), LEFT(?, 20), ?, ?, ?, ?, ?, ?, ?)`,
-    [l.nome, l.email, l.telefone, l.whatsapp, l.obs, l.segmento_id, l.google_place_id, l.prospeccao_busca_id, l.nao_receber_campanhas ? 1 : 0, l.cidade || null, l.uf || null],
+     VALUES ((SELECT eg.grupo_id FROM sys_empresas eg WHERE eg.id = ?), 1, LEFT(?, 50), LEFT(?, 120), LEFT(?, 20), LEFT(?, 20), ?, ?, ?, ?, ?, ?, ?)`,
+    [empresaId, l.nome, l.email, l.telefone, l.whatsapp, l.obs, l.segmento_id, l.google_place_id, l.prospeccao_busca_id, l.nao_receber_campanhas ? 1 : 0, l.cidade || null, l.uf || null],
   );
   const pessoaId = Number(r.insertId);
   await aposGravar('pessoas', String(pessoaId), [], db as any);

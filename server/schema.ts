@@ -12,7 +12,7 @@
  */
 
 import { FORMAS_PAGAMENTO } from '../src/utils/parcelas.js';
-import { DO_GRUPO, EMPRESAS, FOTOS_SQL, LOGO, PESSOAS, PESSOA_DO_CRM, PRODUTOS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
+import { DO_GRUPO, EMPRESAS, FOTOS_SQL, LOGO, PESSOAS, PESSOA_DO_CRM, PESSOA_DO_GRUPO, PRODUTOS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
 
 export type FieldType =
   | 'text'
@@ -370,8 +370,8 @@ const CRIADO_ATUALIZADO_ERP = [
   { name: 'criado_em', label: 'Criado em', type: 'datetime', readOnly: true, coluna: 'date_insert' } as FieldDef,
   { name: 'atualizado_em', label: 'Atualizado em', type: 'datetime', readOnly: true, coluna: 'date_update' } as FieldDef,
 ];
-/** Escopo de cad_pessoas no CRM: não excluída e cliente ou lead. O ? é a filial: a pessoa é de todas (server/erp.ts) */
-const ESCOPO_PESSOA = `t.date_delete IS NULL AND ${PESSOA_DO_CRM('t')} AND ? IS NOT NULL`;
+/** Escopo de cad_pessoas no CRM: não excluída, cliente ou lead, e do grupo de empresas da filial (o ?) */
+const ESCOPO_PESSOA = `t.date_delete IS NULL AND ${PESSOA_DO_CRM('t')} AND ${DO_GRUPO('t.grupo_id')}`;
 
 const ORIGENS_LEAD = [
   { value: 'prospeccao', label: 'Prospecção' },
@@ -1023,7 +1023,7 @@ export const RESOURCES: ResourceDef[] = [
     ],
   },
   {
-    // Cadastro de pessoas do ERP (cad_pessoas), de todas as filiais. Lead = não é cliente (is_cliente = 0)
+    // Cadastro de pessoas do ERP (cad_pessoas), do grupo de empresas da filial. Lead = não é cliente (is_cliente = 0)
     name: 'pessoas',
     table: 'cad_pessoas',
     scopeSql: ESCOPO_PESSOA,
@@ -1109,7 +1109,7 @@ export const RESOURCES: ResourceDef[] = [
     // Contatos da pessoa: quem se fala dentro da empresa-cliente. Mantidos no detalhe da pessoa
     name: 'pessoas_contatos',
     table: 'cad_pessoas_contatos',
-    scopeSql: '? IS NOT NULL', // contato é da pessoa, que é de todas as filiais (server/erp.ts)
+    scopeSql: PESSOA_DO_GRUPO('t.pessoa_id'), // contato é da pessoa, que é do grupo de empresas
     label: 'Contatos',
     labelSingular: 'Contato',
     description: 'Contatos das pessoas (quem se fala na empresa-cliente)',
@@ -1150,7 +1150,7 @@ export const RESOURCES: ResourceDef[] = [
     // (server/enderecos.ts); este recurso só alimenta o painel de detalhe da lista
     name: 'pessoas_enderecos',
     table: 'cad_pessoas_enderecos',
-    scopeSql: '? IS NOT NULL', // endereço é da pessoa, que é de todas as filiais (server/erp.ts)
+    scopeSql: PESSOA_DO_GRUPO('t.pessoa_id'), // endereço é da pessoa, que é do grupo de empresas
     label: 'Endereços',
     labelSingular: 'Endereço',
     description: 'Endereços das pessoas',
@@ -1689,7 +1689,8 @@ export const RESOURCES: ResourceDef[] = [
         readOnly: true,
         // A Pessoa do CRM com o mesmo CNPJ/CPF (vazio se o cliente não está cadastrado)
         // COLLATE: a vendas_produtos foi criada com utf8mb4_0900_ai_ci e pessoas é utf8mb4_unicode_ci
-        sql: `(SELECT p.nome FROM ${PESSOAS} p WHERE p.cpf = t.cli_cnpj COLLATE utf8mb4_unicode_ci AND t.cli_cnpj <> '' ORDER BY p.id LIMIT 1)`,
+        sql: `(SELECT p.nome FROM ${PESSOAS} p WHERE p.cpf = t.cli_cnpj COLLATE utf8mb4_unicode_ci AND t.cli_cnpj <> ''
+               AND p.grupo_id = (SELECT eg.grupo_id FROM sys_empresas eg WHERE eg.id = t.empresa_id) ORDER BY p.id LIMIT 1)`,
       },
       { name: 'cli_cidade', label: 'Cidade', type: 'text', listed: true, searchable: true, filterable: true, maxLength: 50 },
       { name: 'cli_uf', label: 'UF', type: 'text', listed: true, filterable: true, maxLength: 2, width: 'xs', default: 'SC' },

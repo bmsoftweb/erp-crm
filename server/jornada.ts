@@ -17,6 +17,8 @@ import {
   pedidoDaConversa,
   lerChatbot,
   temChave,
+  encerrarAtendimento,
+  marcarEncerramento,
   marcarEvento,
   mudarAtendimento,
   ouvirAudio,
@@ -578,6 +580,18 @@ async function lerEstado(empresaId: number, telefone: string): Promise<Estado> {
   return { conversaId: r[0].id, no: r[0].no_atual, vars, retomar: 'manter', vencido: Boolean(Number(r[0].vencido)) };
 }
 
+/** Alguém da equipe escreveu (tela ou celular) desde o último encerramento */
+async function equipeFalou(empresaId: number, telefone: string): Promise<boolean> {
+  const [r] = await pool.query<any[]>(
+    `SELECT 1 FROM crm_whatsapp_mensagens w
+      WHERE w.empresa_id = ? AND w.telefone = ? AND w.direcao = 'enviada' AND w.origem IS NULL AND w.disparo_id IS NULL
+        AND w.id > COALESCE((SELECT MAX(e.id) FROM crm_whatsapp_mensagens e WHERE e.empresa_id = ? AND e.telefone = ? AND e.tipo = 'encerramento'), 0)
+      LIMIT 1`,
+    [empresaId, telefone, empresaId, telefone],
+  );
+  return r.length > 0;
+}
+
 async function gravarEstado(empresaId: number, telefone: string, e: Estado) {
   const retomar = e.retomar === 'manter' ? 'retomar_em' : e.retomar === 'limpar' ? 'NULL' : 'NOW() + INTERVAL ? MINUTE';
   await pool.query(`UPDATE crm_whatsapp_conversas SET no_atual = ?, variaveis = ?, retomar_em = ${retomar} WHERE empresa_id = ? AND telefone = ?`, [
@@ -895,10 +909,16 @@ class Execucao {
       if (no === null) return; // continua parado onde está
       if (no === 'fim') {
         this.estado.no = FIM;
-        // Fim da jornada (nó Fim ou saída sem ligação): o app não encerra sozinho; a conversa fica aguardando alguém da equipe encerrar
+        // Fim da jornada (nó Fim ou saída sem ligação). Só o bot falou neste atendimento: encerra sozinho (a próxima
+        // mensagem recomeça do Início). Alguém da equipe escreveu: fica aguardando a equipe encerrar
         if (!this.paraHumano) {
-          await mudarAtendimento(this.ctx.empresaId, this.ctx.telefone, 'humano');
-          await marcarEvento(this.ctx.empresaId, this.ctx.telefone, 'Fim da automação: aguardando alguém da equipe encerrar', null);
+          if (await equipeFalou(this.ctx.empresaId, this.ctx.telefone)) {
+            await mudarAtendimento(this.ctx.empresaId, this.ctx.telefone, 'humano');
+            await marcarEvento(this.ctx.empresaId, this.ctx.telefone, 'Fim da automação: aguardando alguém da equipe encerrar', null);
+          } else {
+            await encerrarAtendimento(this.ctx.empresaId, this.ctx.telefone);
+            await marcarEncerramento(this.ctx.empresaId, this.ctx.telefone, null, null, 'Atendimento encerrado pela automação');
+          }
         }
         return;
       }

@@ -6,7 +6,7 @@ import { lerConfig } from './config.js';
 import { exigirAcesso } from './permissoes.js';
 import { cifrar, decifrar } from './segredo.js';
 import { chaveTelefone, telefoneWhatsApp } from './whatsapp.js';
-import { PESSOAS, USUARIOS } from './erp.js';
+import { DO_GRUPO, PESSOAS, USUARIOS } from './erp.js';
 
 /**
  * Prospecção: busca de empresas na Google Places API (oficial, Text Search) por segmento e
@@ -455,7 +455,7 @@ async function marcarQuemJaExiste(empresaId: string, leads: Lead[]) {
   const todas = [...new Set(leads.flatMap(chaves))];
   const achar = async (tabela: 'pessoas' | 'leads') => {
     // Pessoas são do ERP (todas as filiais: o ? da filial fica, sem filtrar); leads são da filial
-    const fonte = tabela === 'pessoas' ? `${PESSOAS} t WHERE ? IS NOT NULL` : 'crm_leads t WHERE t.empresa_id = ? AND t.convertido_em IS NULL';
+    const fonte = tabela === 'pessoas' ? `${PESSOAS} t WHERE ${DO_GRUPO('t.grupo_id')}` : 'crm_leads t WHERE t.empresa_id = ? AND t.convertido_em IS NULL';
     const [porPlace] = await pool.query<any[]>(`SELECT id, google_place_id FROM ${fonte} AND google_place_id IN (?)`, [
       empresaId,
       leads.map((l) => l.place_id),

@@ -22,7 +22,7 @@ assert.throws(() => normalizarCriterios([]), /ao menos um/);
   assert.throws(() => normalizarCriterios([{ regra: 'cod_integracao', operador: '>', valor: 'x' }]), /igual a, diferente de/);
 }
 const { where, params } = sqlCriterios(normalizarCriterios([{ regra: 'tipo', operador: '=', valor: "x' OR '1'='1" }]), 7);
-assert.strictEqual(where, '? IS NOT NULL AND p.tipo = ?');
+assert.strictEqual(where, 'p.grupo_id = (SELECT eg.grupo_id FROM sys_empresas eg WHERE eg.id = ?) AND p.tipo = ?');
 assert.deepStrictEqual(params, [7, "x' OR '1'='1"]);
 
 // Variáveis

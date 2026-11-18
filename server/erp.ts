@@ -3,10 +3,8 @@
  * junta à consulta (derived_merge) e usa os índices da tabela de verdade. Só para leitura; a gravação vai
  * direto em cad_pessoas, cad_produtos e sys_usuarios.
  *
- * Pessoas são de todas as filiais, sem empresa_id: nas consultas que eram por empresa ficou `? IS NOT NULL` no lugar
- * de `p.empresa_id = ?` (a filial continua sendo passada, mas não filtra). Produtos e categorias são do grupo de
- * empresas (sys_grupos) da filial: DO_GRUPO, também com o ? da filial.
- * ponytail: filtro por filial nos cadastros, se um dia o ERP separar pessoas por filial
+ * Pessoas (cad_pessoas.grupo_id), produtos e categorias são do grupo de empresas (sys_grupos) da filial: DO_GRUPO,
+ * com o ? da filial. Contatos e endereços são da pessoa: PESSOA_DO_GRUPO.
  */
 import { pool } from './db.js';
 
@@ -23,7 +21,7 @@ export const PESSOA_DO_CRM = (p: string) =>
 export const PESSOAS = `(SELECT p.id, p.nome, IF(p.is_cliente = 1, 'cliente', 'lead') AS tipo, p.codigo AS cod_integracao, p.cpf_cnpj AS cpf,
         p.fone_principal AS telefone, p.whatsapp, p.email_principal AS email, p.observacoes AS obs, p.segmento_id, p.ativo,
         p.nao_receber_campanhas, p.personalizados, p.google_place_id, p.prospeccao_busca_id, p.cidade_nome AS cidade, p.cidade_uf AS uf,
-        p.date_insert AS criado_em, p.date_update AS atualizado_em
+        p.date_insert AS criado_em, p.date_update AS atualizado_em, p.grupo_id
    FROM cad_pessoas p WHERE p.date_delete IS NULL)`;
 
 /** cad_pessoas_contatos como a antiga "pessoas_contatos" */
@@ -36,8 +34,18 @@ export const ENDERECO_PESSOA = (p: string) =>
   `NULLIF(CONCAT_WS(', ', NULLIF(CONCAT_WS(', ', ${p}.logradouro, NULLIF(${p}.numero, '')), ''), ${p}.complemento, NULLIF(${p}.bairro, ''),
      NULLIF(CONCAT_WS('/', ${p}.cidade_nome, ${p}.cidade_uf), ''), IF(COALESCE(${p}.cep, '') = '', NULL, CONCAT('CEP ', ${p}.cep))), '')`;
 
-/** Produtos, categorias e unidades são do grupo de empresas: `col` = a grupo_id deles; ? = a filial logada */
+/** Pessoas, produtos, categorias e unidades são do grupo de empresas: `col` = a grupo_id deles; ? = a filial logada */
 export const DO_GRUPO = (col: string) => `${col} = (SELECT eg.grupo_id FROM sys_empresas eg WHERE eg.id = ?)`;
+
+/** Contato ou endereço (col = o pessoa_id dele) de uma pessoa do grupo da filial; ? = a filial logada */
+export const PESSOA_DO_GRUPO = (col: string) => `${col} IN (SELECT gp.id FROM cad_pessoas gp WHERE ${DO_GRUPO('gp.grupo_id')})`;
+
+/** Grupo de empresas da filial: vai em cad_pessoas.grupo_id na pessoa nova */
+export async function grupoDaFilial(empresaId: string | number): Promise<number> {
+  const [r] = await pool.query<any[]>('SELECT grupo_id FROM sys_empresas WHERE id = ?', [empresaId]);
+  if (!r.length) throw new Error('Filial não encontrada.');
+  return Number(r[0].grupo_id);
+}
 
 /** cad_produtos como a antiga "produtos" (serviço = cad_produtos.servico = 1); grupo_id é a categoria, grupo_empresas_id o grupo de empresas */
 export const PRODUTOS = `(SELECT pr.id, pr.nome, pr.nome_proposta, pr.sku AS codigo_sku, pr.preco_venda AS preco_tabela,

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
-import { gravarLogo, USUARIOS_FILIAL } from './erp.js';
+import { gravarLogo, grupoDaFilial, USUARIOS_FILIAL } from './erp.js';
 import { FieldDef, ResourceDef, RESOURCES, getResource, writableFields, columnNames, colunaSql, apelidos, paraColunas } from './schema.js';
 import { aposGravar, antesDeExcluir, antesDeGravar } from './regras.js';
 import { exigirAcesso } from './permissoes.js';
@@ -475,6 +475,8 @@ export function createCrudRouter() {
       const filhos = await filhosDoCorpo(resource, corpo, empresaId);
 
       if (resource.tenantColumn) payload[resource.tenantColumn] = empresaId;
+      // Pessoa é do grupo de empresas da filial
+      if (resource.table === 'cad_pessoas') payload.grupo_id = await grupoDaFilial(empresaId);
       // Negócio novo sem proprietário escolhido fica com quem o criou
       if (resource.name === 'negocios' && !payload.proprietario_id) payload.proprietario_id = res.locals.usuario.id;
       if (resource.name === 'campanhas') payload.criada_por = res.locals.usuario.id;

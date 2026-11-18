@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { exigirImportador } from './permissoes.js';
 import { pool } from './db.js';
+import { grupoDaFilial } from './erp.js';
 import { texto, digitos, DESTINOS_VENDA } from './importbm.js';
 import { lerData, lerNumero } from '../src/utils/formatters.js';
 
@@ -204,7 +205,10 @@ export function createImportArquivoRouter(): Router {
       await conn.beginTransaction();
       // Toda a cad_pessoas: código e CPF/CNPJ são únicos no ERP (sem FOR UPDATE, para não travar o cadastro do ERP;
       // duas importações ao mesmo tempo esbarram nas chaves únicas e uma delas é desfeita)
-      const [existentes] = await conn.query<any[]>('SELECT id, codigo, cpf_cnpj FROM cad_pessoas WHERE codigo IS NOT NULL OR cpf_cnpj IS NOT NULL');
+      const [existentes] = await conn.query<any[]>('SELECT id, codigo, cpf_cnpj, grupo_id FROM cad_pessoas WHERE codigo IS NOT NULL OR cpf_cnpj IS NOT NULL');
+      // Pessoa nova vai para o grupo de empresas da filial; a que já existe em outro grupo não é alterada (fica em ignorados)
+      const grupo = await grupoDaFilial(empresaId);
+      const deOutroGrupo = new Set(existentes.filter((r) => Number(r.grupo_id) !== grupo).map((r) => Number(r.id)));
       const porCodigo = new Map<string, number>();
       const porCpf = new Map<string, number>();
       for (const r of existentes) {
@@ -244,7 +248,7 @@ export function createImportArquivoRouter(): Router {
         const lote = pendentes;
         pendentes = [];
         const [r] = await conn.query<any>(
-          `INSERT INTO cad_pessoas (is_cliente, tipo_pessoa, codigo, nome, email_principal, fone_principal, cpf_cnpj, observacoes, segmento_id,
+          `INSERT INTO cad_pessoas (grupo_id, is_cliente, tipo_pessoa, codigo, nome, email_principal, fone_principal, cpf_cnpj, observacoes, segmento_id,
                                     personalizados${END_CAMPOS.map((c) => `, ${COLUNA[c]}`).join('')}) VALUES ?`,
           [lote.map((x) => x.valores)],
         );
@@ -268,7 +272,7 @@ export function createImportArquivoRouter(): Router {
         if (pendente(p)) await gravarPendentes();
         const id = achar(p);
         if (id) {
-          if (!atualizar) { ignorados++; continue; }
+          if (!atualizar || deOutroGrupo.has(Number(id))) { ignorados++; continue; }
           p.segmento_id = await idSegmento(p.segmento);
           const json = p.personalizados ? JSON.stringify(p.personalizados) : null;
           const sets = CAMPOS.filter((c) => p[c] !== null);
@@ -303,7 +307,7 @@ export function createImportArquivoRouter(): Router {
         if (temEndereco(p.endereco)) enderecos++;
         pendentes.push({
           p,
-          valores: [1, p.cpf?.length === 11 ? 'F' : 'J', p.cod_integracao, p.nome, p.email, p.telefone, p.cpf, p.obs, p.segmento_id, json,
+          valores: [grupo, 1, p.cpf?.length === 11 ? 'F' : 'J', p.cod_integracao, p.nome, p.email, p.telefone, p.cpf, p.obs, p.segmento_id, json,
             ...END_CAMPOS.map((c) => p.endereco[c])],
         });
         inseridos++;

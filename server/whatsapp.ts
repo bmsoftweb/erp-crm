@@ -3,7 +3,7 @@ import { head, put } from '@vercel/blob';
 import { pool } from './db.js';
 import { lerConfig } from './config.js';
 import { cifrar, decifrar, textoConfig } from './segredo.js';
-import { CONTATOS, PESSOAS } from './erp.js';
+import { CONTATOS, DO_GRUPO, PESSOAS, PESSOA_DO_GRUPO } from './erp.js';
 
 /**
  * WhatsApp pela Z-API ou pela Evolution API.
@@ -606,10 +606,10 @@ export async function donoDoTelefone(empresaId: string | number, telefone: strin
   const fim = chave.slice(-8);
   const [rows] = await pool.query<any[]>(
     `SELECT 'p' AS de, id AS pessoa_id, NULL AS contato_id, whatsapp, NULL AS celular, telefone
-       FROM ${PESSOAS} pessoas WHERE ? IS NOT NULL AND (${oito('whatsapp')} OR ${oito('telefone')})
+       FROM ${PESSOAS} pessoas WHERE ${DO_GRUPO('grupo_id')} AND (${oito('whatsapp')} OR ${oito('telefone')})
      UNION ALL
      SELECT 'c', pessoa_id, id, whatsapp, celular, telefone
-       FROM ${CONTATOS} pessoas_contatos WHERE ? IS NOT NULL AND ativo = 1 AND (${oito('whatsapp')} OR ${oito('celular')} OR ${oito('telefone')})
+       FROM ${CONTATOS} pessoas_contatos WHERE ${PESSOA_DO_GRUPO('pessoa_id')} AND ativo = 1 AND (${oito('whatsapp')} OR ${oito('celular')} OR ${oito('telefone')})
      ORDER BY pessoa_id, contato_id`,
     [empresaId, fim, fim, empresaId, fim, fim, fim],
   );

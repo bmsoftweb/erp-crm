@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.207 — 2026-11-18
+
+- Pessoas isoladas pelo grupo de empresas da filial (coluna nova `cad_pessoas.grupo_id`): telas de Pessoas, Contatos e Endereços, busca das Conversas, dono do número no WhatsApp, público das campanhas (critérios e seleção com IA), Consultas com IA, prospecção, proposta e pedido. Pessoa nova (tela, lead convertido, importação de arquivo) grava o grupo da filial; na importação, quem já existe em outro grupo não é alterado (fica em ignorados).
+- Automação: no nó Fim, se só o bot falou no atendimento, a conversa é encerrada sozinha e a próxima mensagem recomeça do Início; se alguém da equipe escreveu, continua aguardando a equipe encerrar.
+
 ## 0.0.206 — 2026-11-18
 
 - Registrar pedido: sem produto na conversa (ex.: o cliente só escolheu "Comprar" no menu), o próprio nó pergunta o que ele quer (pergunta configurável no nó) e espera; pode vir direto do menu. A saída "erro" passa a ser "não fechou o pedido" (6 resumos ou perguntas sem fechar).
