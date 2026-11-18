@@ -922,6 +922,7 @@ const PainelNo: React.FC<PainelProps> = ({ no, somenteLeitura, departamentos, va
               ))}
             </SelectAuto>
           </div>
+          {textoCom('pergunta', 'Pergunta quando a conversa ainda não tem produto', 3)}
           {textoCom('observacao', 'Observação do pedido (opcional)', 3)}
           <Toggle
             checked={d.estoque !== false}
@@ -938,11 +939,13 @@ const PainelNo: React.FC<PainelProps> = ({ no, somenteLeitura, departamentos, va
             aceita a quantidade que tem. Sugeridos: no resumo final, até 3 produtos da lista de sugestões dos itens (com saldo), sem repetir na conversa.
           </span>
           <span className={HINT_CLASS}>
-            Usa a chave e o modelo de Configurações › IA. Coloque depois de o cliente dizer o que quer (ex.: uma Pergunta "O que você deseja?"). A IA lê a conversa, acha cada
+            Usa a chave e o modelo de Configurações › IA. Pode vir direto da opção "Comprar" de um menu: se o cliente ainda não disse nenhum produto, o nó manda a
+            pergunta acima e espera. A IA lê a conversa (áudios inclusive, transcritos), acha cada
             produto no cadastro (aceita plural, erro de digitação e apelido; com o preço de tabela) e manda o resumo com o total para o cliente confirmar. Se ele corrigir
             algo, ou se um item servir para mais de um produto (ex.: "cerveja"), ela pergunta e manda o resumo de novo. Só grava depois do "sim"; sem cadastro, o cliente
             entra como lead e vira cliente, com negócio e atividade para o vendedor. Depois use {'{{pedido_numero}}'}, {'{{pedido_total}}'}, {'{{pedido_itens}}'} e{' '}
-            {'{{pedido_faltou}}'} (o que não achou) numa Mensagem. Nenhum produto achado (ou 6 resumos sem confirmar): saída "não achou produtos".
+            {'{{pedido_faltou}}'} (o que não achou) numa Mensagem. Se o cliente pedir foto de um produto, manda a foto principal do cadastro. 6 resumos ou perguntas
+            sem fechar o pedido: saída "não fechou o pedido".
           </span>
         </>
       )}

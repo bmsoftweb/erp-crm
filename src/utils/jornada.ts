@@ -76,7 +76,7 @@ export const TIPOS_NO: Record<TipoNo, { nome: string; icone: LucideIcon; cor: st
     nome: 'Registrar pedido',
     icone: ShoppingCart,
     cor: 'teal',
-    ajuda: 'A IA lê a conversa, acha no cadastro os produtos e as quantidades que o cliente pediu , manda o resumo e grava o pedido quando o cliente confirma. Espera a resposta.',
+    ajuda: 'A IA lê a conversa, acha no cadastro os produtos e as quantidades que o cliente pediu (sem nenhum, pergunta), manda o resumo e grava o pedido quando o cliente confirma. Espera a resposta.',
   },
   departamento: { nome: 'Departamento', icone: Network, cor: 'sky', ajuda: 'Passa para humano do departamento (atividade + aviso no WhatsApp).' },
   fim: { nome: 'Fim', icone: Flag, cor: 'rose', ajuda: 'Encerra a automação (com uma mensagem opcional).' },
@@ -146,7 +146,7 @@ export function saidasDoNo(no: Pick<NoJornada, 'tipo' | 'dados'>): { id: string;
       return [
         { id: 'sucesso', rotulo: 'pedido gravado' },
         { id: 'cancelado', rotulo: 'cliente desistiu' },
-        { id: 'erro', rotulo: 'não achou produtos' },
+        { id: 'erro', rotulo: 'não fechou o pedido' },
       ];
     case 'ia':
       return [{ id: 'humano', rotulo: 'passou p/ humano' }];
@@ -196,7 +196,7 @@ export function dadosPadrao(tipo: TipoNo): Record<string, any> {
     case 'tarefa':
       return { departamento_id: null, assunto: 'Retornar contato: {{nome}} ({{empresa}})', observacao: '{{nome}} da empresa {{empresa}} pediu contato fora do horário de atendimento.' };
     case 'pedido':
-      return { status: 'aguardando_aprovacao', observacao: '', estoque: true, sugestoes: true };
+      return { status: 'aguardando_aprovacao', observacao: '', pergunta: 'Me diga o que você quer comprar, com as quantidades. Pode mandar tudo numa mensagem só (ex.: 2 arroz e 1 café).', estoque: true, sugestoes: true };
     case 'departamento':
       return { departamento_id: null, texto: 'Certo! Vou te encaminhar para a equipe. Um atendente já vai continuar a conversa por aqui.' };
     case 'fim':

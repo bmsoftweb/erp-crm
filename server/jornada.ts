@@ -49,8 +49,10 @@ const MAX_PASSOS = 50;
 const MAX_ARQUIVO = 3 * 1024 * 1024;
 /** Estado da conversa depois de um nó Fim (ou saída sem ligação) */
 const FIM = '__fim';
-/** Resumos do pedido sem o cliente confirmar: depois disso o nó "Registrar pedido" sai por "erro" */
+/** Resumos (ou perguntas) do pedido sem o cliente fechar: depois disso o nó "Registrar pedido" sai por "erro" */
 const MAX_RESUMOS_PEDIDO = 6;
+/** Pergunta do nó "Registrar pedido" quando a conversa ainda não tem produto */
+export const PERGUNTA_PEDIDO = 'Me diga o que você quer comprar, com as quantidades. Pode mandar tudo numa mensagem só (ex.: 2 arroz e 1 café).';
 
 const reais = (n: number) => `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const qtdTexto = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
@@ -67,6 +69,13 @@ const produtosDoResumo = (p: PropostaPedido): number[] => [
   ].map((i) => i.produto_id)),
 ];
 
+/**
+ * Falta o cliente escolher algo: um item que serve para mais de um produto, ou um sem estoque que tem troca
+ * (similar ou a quantidade que há). Sem estoque e sem troca não espera escolha: só fica fora do pedido
+ */
+export const pedidoPendente = (p: Pick<PropostaPedido, 'duvidas'> & Partial<Pick<PropostaPedido, 'semEstoque'>>) =>
+  p.duvidas.length > 0 || (p.semEstoque ?? []).some((f) => f.opcoes.length > 0 || f.disponivel > 0);
+
 /** Resumo do pedido para o cliente confirmar: itens e total, as dúvidas numeradas e o que não foi achado */
 export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'faltou'> & Partial<Pick<PropostaPedido, 'semEstoque' | 'sugestoes'>>): string {
   const partes: string[] = [];
@@ -80,15 +89,17 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
   }
   for (const f of p.semEstoque ?? []) {
     const aviso = f.disponivel > 0 ? `${f.item.nome}: só temos ${qtdTexto(f.disponivel)} no estoque (você pediu ${qtdTexto(f.item.quantidade)}).` : `${f.item.nome} está sem estoque.`;
-    partes.push(f.opcoes.length ? `${aviso} Posso trocar por:\n${opcoesNumeradas(f.opcoes)}` : aviso);
+    partes.push(f.opcoes.length ? `${aviso} Posso trocar por:\n${opcoesNumeradas(f.opcoes)}` : f.disponivel > 0 ? aviso : `${aviso} Não tenho outro parecido agora.`);
   }
   if (p.faltou.length) partes.push(`Não encontrei: ${p.faltou.join(', ')}.`);
-  const pendente = p.duvidas.length || p.semEstoque?.length;
+  const pendente = pedidoPendente(p);
   if (!pendente && p.sugestoes?.length) partes.push(`Aproveite também:\n${opcoesNumeradas(p.sugestoes)}`);
   partes.push(
     pendente
       ? 'Me diga como você prefere (e se quer mudar mais alguma coisa).'
-      : `Está certo? Responda "sim" para confirmar, ou me diga o que mudar${p.sugestoes?.length ? ' (ou o que incluir dos sugeridos)' : ''}.`,
+      : !p.itens.length
+        ? 'Quer pedir outra coisa?'
+        : `Está certo? Responda "sim" para confirmar, ou me diga o que mudar${p.sugestoes?.length ? ' (ou o que incluir dos sugeridos)' : ''}.`,
   );
   return partes.join('\n\n');
 }
@@ -330,6 +341,7 @@ function prepararDados(tipo: TipoNo, d: any, id: string, anterior: Jornada | nul
         ...base,
         status: ['rascunho', 'aguardando_aprovacao', 'aprovado'].includes(d.status) ? d.status : 'aguardando_aprovacao',
         observacao: texto(d.observacao, 1000),
+        pergunta: texto(d.pergunta, 1000),
         estoque: d.estoque !== false,
         sugestoes: d.sugestoes !== false,
       };
@@ -802,16 +814,23 @@ class Execucao {
         extras: visto ? produtosDoResumo(visto) : [],
       });
       if (visto && p.situacao === 'cancelou') return sair('cancelado');
-      if (visto && p.situacao === 'confirmou' && visto.itens.length && !visto.duvidas.length && !visto.semEstoque?.length) {
+      if (visto && p.situacao === 'confirmou' && visto.itens.length && !pedidoPendente(visto)) {
         await this.gravarPedido(no, visto);
         return sair('sucesso');
       }
       v.pedido_faltou = p.faltou.join(', ');
-      if (!p.itens.length && !p.duvidas.length && !p.semEstoque.length) return sair('erro');
       v._pedido_voltas = (Number(v._pedido_voltas) || 0) + 1;
       if (v._pedido_voltas > MAX_RESUMOS_PEDIDO) {
-        await this.falha(no, `o cliente não confirmou o pedido depois de ${MAX_RESUMOS_PEDIDO} resumos.`);
+        await this.falha(no, `o cliente não fechou o pedido depois de ${MAX_RESUMOS_PEDIDO} tentativas.`);
         return sair('erro');
+      }
+      await this.fotosDoPedido(p.fotos);
+      // Nenhum produto na conversa ainda (ex.: só escolheu "Comprar" no menu): pergunta o que ele quer
+      if (!p.itens.length && !p.duvidas.length && !p.semEstoque.length) {
+        delete v._pedido;
+        const naoAchou = p.faltou.length ? `Não encontrei: ${p.faltou.join(', ')}.\n\n` : '';
+        await this.enviar(naoAchou + (preencher(no.dados.pergunta ?? '', await this.vars()).trim() || PERGUNTA_PEDIDO));
+        return null;
       }
       v._pedido = JSON.stringify(p);
       v._pedido_oferecidos = JSON.stringify([...oferecidos, ...p.sugestoes.map((s) => s.produto_id)]);
@@ -823,6 +842,26 @@ class Execucao {
       delete v._pedido_oferecidos;
       return this.iaFalhou(no, `registrar pedido: ${err.message}`);
     }
+  }
+
+  /** Foto principal de cada produto de que o cliente pediu foto; sem foto no cadastro, avisa */
+  private async fotosDoPedido(fotos: PropostaPedido['fotos']) {
+    const sem: string[] = [];
+    for (const f of fotos) {
+      const [r] = await pool.query<any[]>('SELECT url FROM cad_produtos_imagens WHERE produto_id = ? AND variante_id IS NULL ORDER BY principal DESC, ordem, id LIMIT 1', [f.produto_id]);
+      try {
+        if (!r[0]?.url) throw new Error('sem foto');
+        const resp = await buscarFora(String(r[0].url));
+        const mimetype = (resp.headers.get('content-type') || '').split(';')[0];
+        const dados = Buffer.from(await resp.arrayBuffer());
+        if (!resp.ok || !mimetype.startsWith('image/') || dados.length > MAX_ARQUIVO) throw new Error(`a foto não abriu (HTTP ${resp.status})`);
+        await this.enviar(f.nome, { tipo: 'imagem', base64: dados.toString('base64'), mimetype, nome: `${f.produto_id}.jpg`, legenda: f.nome });
+      } catch (err: any) {
+        if (err.message !== 'sem foto') console.error(`Jornada: foto do produto ${f.produto_id}: ${err.message}`);
+        sem.push(f.nome);
+      }
+    }
+    if (sem.length) await this.enviar(`Não tenho foto de ${sem.join(', ')}.`);
   }
 
   /** Grava o pedido confirmado; sem cadastro, o cliente entra como lead e vira cliente, com negócio e atividade para o vendedor */
@@ -1251,7 +1290,7 @@ const FORMATO_NOS = `Tipos de nó (campo "dados" de cada um) e as saídas (campo
 - lead: {nome, empresa, email, interesse}. Cadastra pessoa, negócio e atividade (use variáveis, ex.: "{{nome}}"). Saída "proximo".
 - prospeccao: {funil_id, etapa_id, negocio, nome, empresa, email, observacao}. Abre negócio no funil/etapa (null = o primeiro). Saída "proximo".
 - tarefa: {departamento_id, assunto, observacao}. Cria tarefa para alguém retornar o contato. Saída "proximo".
-- pedido: {status:"rascunho"|"aguardando_aprovacao"|"aprovado", observacao, estoque (true = confere o saldo e oferece os similares do cadastro quando falta), sugestoes (true = oferece as sugestões do cadastro junto)}. A IA lê a conversa, acha no cadastro os produtos e quantidades que o cliente pediu, manda o resumo e espera o cliente confirmar (corrige e pergunta de novo quando ele muda algo ou quando um item serve para mais de um produto); confirmado, grava o pedido. Saídas "sucesso" (gravado), "cancelado" (cliente desistiu) e "erro" (nenhum produto achado). Cria {{pedido_numero}}, {{pedido_total}}, {{pedido_itens}} e {{pedido_faltou}} (o que não achou). Use depois de o cliente dizer o que quer (ex.: uma pergunta "O que você deseja?").
+- pedido: {status:"rascunho"|"aguardando_aprovacao"|"aprovado", observacao, pergunta (o que perguntar quando a conversa ainda não tem produto; vazio = padrão), estoque (true = confere o saldo e oferece os similares do cadastro quando falta), sugestoes (true = oferece as sugestões do cadastro junto)}. A IA lê a conversa, acha no cadastro os produtos e quantidades que o cliente pediu, manda o resumo e espera o cliente confirmar (corrige e pergunta de novo quando ele muda algo ou quando um item serve para mais de um produto); confirmado, grava o pedido. Sem produto na conversa, ele mesmo pergunta o que o cliente quer; pedido de foto de um produto manda a foto do cadastro. Saídas "sucesso" (gravado), "cancelado" (cliente desistiu) e "erro" (6 tentativas sem fechar). Cria {{pedido_numero}}, {{pedido_total}}, {{pedido_itens}} e {{pedido_faltou}} (o que não achou). Pode vir direto da opção "Comprar" de um menu, sem pergunta antes.
 - departamento: {departamento_id, texto}. Passa para um humano do departamento. Sem saídas (fim da automação).
 - fim: {texto}. Encerra (mensagem opcional). Sem saídas.
 Todo nó pode ter dados.titulo (até 60 caracteres) para nomeá-lo no quadro.

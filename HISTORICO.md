@@ -2,6 +2,12 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.206 — 2026-11-18
+
+- Registrar pedido: sem produto na conversa (ex.: o cliente só escolheu "Comprar" no menu), o próprio nó pergunta o que ele quer (pergunta configurável no nó) e espera; pode vir direto do menu. A saída "erro" passa a ser "não fechou o pedido" (6 resumos ou perguntas sem fechar).
+- Registrar pedido: quando o cliente pede foto de um produto, o bot manda a foto principal do cadastro (sem foto, avisa) e segue com o resumo.
+- Registrar pedido: item sem estoque e sem similar não fica esperando escolha: o resumo diz "Não tenho outro parecido agora" e pede a confirmação do resto, ou pergunta se ele quer pedir outra coisa.
+
 ## 0.0.205 — 2026-11-18
 
 - Conversas: o player de áudio (e imagens, figurinhas, vídeos e documentos) volta a abrir. Como a Evolution não guarda mais as mensagens, o CRM guarda no Blob, cifrada, a mensagem de cada mídia que chega no aviso e entrega ela inteira à Evolution na hora de baixar. Mídias recebidas antes desta versão continuam sem abrir.

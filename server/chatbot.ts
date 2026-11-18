@@ -642,6 +642,8 @@ export interface PropostaPedido {
   semEstoque: { item: ItemPedido; disponivel: number; opcoes: ItemPedido[] }[];
   /** Sugestões do cadastro (venda casada) para os itens, com saldo; só quando nada está pendente */
   sugestoes: ItemPedido[];
+  /** Produtos de que o cliente pediu foto na última mensagem */
+  fotos: { produto_id: number; nome: string }[];
 }
 type ProdutoCadastro = { id: number; nome: string; codigo_sku: string | null; preco_tabela: unknown; servico?: unknown };
 export interface OpcoesPedido {
@@ -707,7 +709,7 @@ async function relacionados(tipo: 'similares' | 'sugestoes', ids: number[], empr
 }
 
 const PROMPT_PEDIDO = `Você monta o pedido de um cliente a partir de uma conversa de WhatsApp com a empresa, usando só os produtos do cadastro.
-Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>]}]}
+Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>]}],"fotos":[<ids>]}
 - itens: tudo o que o cliente quer comprar, já com as correções que ele fez na conversa (quantidade nova, item trocado ou
   retirado). Quantidade não dita = 1. Produto de que ele desistiu ou que só perguntou o preço não entra. Um item por produto.
 - produto_id: o produto do cadastro que é com certeza o que o cliente pediu. Aceite plural, erro de digitação, abreviação,
@@ -718,7 +720,9 @@ Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"t
   mudança (ex.: "sim", "pode mandar", "confirmo"); "cancelou" se ele desiste do pedido; senão "pedindo".
 - Se a empresa avisou que um produto está sem estoque (ou só tem parte) e o cliente escolheu um dos oferecidos no lugar,
   use o escolhido; se ele aceitou a quantidade que tem, use essa quantidade; se não quis mais, tire o item.
-- Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = 1).`;
+- Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = 1).
+- fotos: ids do cadastro dos produtos de que a ÚLTIMA mensagem do cliente pede foto ou imagem ("manda uma foto", "tem foto?").
+  Sem produto dito, são os do pedido (ou os oferecidos por último). Pedir foto não é confirmar: situacao "pedindo". Nenhum pedido de foto: [].`;
 
 /**
  * Nó "Registrar pedido": a IA lê a conversa (inclusive os resumos já mandados e as correções do cliente) e monta o
@@ -734,7 +738,7 @@ export async function pedidoDaConversa(ctx: Contexto, cfg: ConfigChatbot, opcoes
 
 /** O mesmo, a partir do texto da conversa ("Cliente: ..." / "Empresa: ...") */
 export async function pedidoDoTexto(conversa: string, empresaId: string | number, cfg: ConfigChatbot, op: OpcoesPedido = {}): Promise<PropostaPedido> {
-  const res: PropostaPedido = { situacao: 'pedindo', itens: [], duvidas: [], faltou: [], semEstoque: [], sugestoes: [] };
+  const res: PropostaPedido = { situacao: 'pedindo', itens: [], duvidas: [], faltou: [], semEstoque: [], sugestoes: [], fotos: [] };
   if (!conversa) return res;
   const escopo = `FROM ${PRODUTOS} t WHERE t.ativo = 1 AND ${DO_GRUPO('t.grupo_empresas_id')}`;
   const [[{ qtd }]] = await pool.query<any>(`SELECT COUNT(*) AS qtd ${escopo}`, [empresaId]);
@@ -782,6 +786,11 @@ ${conversa}`,
   const doCadastro = new Map(catalogo.map((c) => [Number(c.id), c]));
   const item = (c: ProdutoCadastro, quantidade: number): ItemPedido => ({ produto_id: Number(c.id), nome: c.nome, quantidade, preco_unitario: Number(c.preco_tabela) || 0 });
   if (j.situacao === 'confirmou' || j.situacao === 'cancelou') res.situacao = j.situacao;
+  res.fotos = [...new Set((Array.isArray(j.fotos) ? j.fotos : []).map(Number))]
+    .map((id) => doCadastro.get(Number(id)))
+    .filter((c): c is ProdutoCadastro => Boolean(c))
+    .slice(0, 3)
+    .map((c) => ({ produto_id: Number(c.id), nome: c.nome }));
   for (const i of (Array.isArray(j.itens) ? j.itens : []).slice(0, 30)) {
     const texto = String(i?.texto ?? '').trim().slice(0, 200);
     const quantidade = Math.round(Number(i?.quantidade) * 1000) / 1000;

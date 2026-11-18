@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { agoraBrasilia, comparar, dentroDoHorario, descreverHorario, ipInterno, jornadaPublica, pegar, preencher, prepararJornada, resumoPedido, saidasDoNo } from './jornada.js';
+import { agoraBrasilia, comparar, dentroDoHorario, descreverHorario, ipInterno, jornadaPublica, pegar, pedidoPendente, preencher, prepararJornada, resumoPedido, saidasDoNo } from './jornada.js';
 
 const inicio = { id: 'inicio', tipo: 'inicio', x: 0, y: 0, dados: {} };
 const menu = { id: 'm1', tipo: 'menu', x: 0, y: 100, dados: { texto: 'Escolha:', opcoes: [{ id: 'o1', rotulo: 'Vendas' }, { id: 'o2', rotulo: 'Suporte' }] } };
@@ -37,8 +37,13 @@ const semEstoque = resumoPedido({
   sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }],
 });
 assert.match(semEstoque, /AGUA 500ML: só temos 24 no estoque \(você pediu 30\)\. Posso trocar por:\n1\) AGUA 1,5L — R\$ 3,50/);
-assert.match(semEstoque, /FEIJAO 1KG está sem estoque\./);
+assert.match(semEstoque, /FEIJAO 1KG está sem estoque\. Não tenho outro parecido agora\./);
 assert.doesNotMatch(semEstoque, /Aproveite também/);
+// Sem estoque e sem troca não espera escolha: com outros itens, confirma o resto; sozinho, oferece pedir outra coisa
+const tora = { item: { ...agua, nome: 'TORA EUCALIPTO', quantidade: 1 }, disponivel: 0, opcoes: [] };
+assert.strictEqual(pedidoPendente({ duvidas: [], semEstoque: [tora] }), false);
+assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [tora] }), /Não tenho outro parecido agora\.\n\nEstá certo\? Responda "sim"/);
+assert.match(resumoPedido({ itens: [], duvidas: [], faltou: [], semEstoque: [tora] }), /TORA EUCALIPTO está sem estoque\. Não tenho outro parecido agora\.\n\nQuer pedir outra coisa\?$/);
 const comSugestao = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [], sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }] });
 assert.match(comSugestao, /Aproveite também:\n1\) OLEO 900ML — R\$ 8,50/);
 assert.match(comSugestao, /ou o que incluir dos sugeridos/);
