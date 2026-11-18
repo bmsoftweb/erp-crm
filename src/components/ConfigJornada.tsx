@@ -18,14 +18,15 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { AlertTriangle, Download, ImagePlus, Loader2, Plus, Save, Upload, X } from 'lucide-react';
-import { enviarArquivoJornada, fetchArquivoJornada, fetchConfig, fetchFunis, fetchOptions, salvarConfig } from '../services/api';
+import { AlertTriangle, Download, ImagePlus, Loader2, Plus, Save, Sparkles, Upload, X } from 'lucide-react';
+import { enviarArquivoJornada, fetchArquivoJornada, fetchConfig, fetchFunis, fetchOptions, refazerJornadaIa, salvarConfig } from '../services/api';
 import { Funil, OpcaoRef } from '../types';
 import { INPUT_CLASS, LABEL_CLASS, FIELD_CLASS, HINT_CLASS } from '../utils/formStyles';
 import {
   CORES,
   GRUPOS_NO,
   OPERADORES,
+  STATUS_PEDIDO,
   TIPOS_NO,
   avisosJornada,
   dadosPadrao,
@@ -228,6 +229,8 @@ const Editor: React.FC<Props> = ({ somenteLeitura, onToast, chave = 'jornada' })
   const [salvando, setSalvando] = useState(false);
   const [transferindo, setTransferindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [pedindoIa, setPedindoIa] = useState(false);
+  const [pedidoIa, setPedidoIa] = useState('');
   const quadroRef = useRef<HTMLDivElement>(null);
   const importarRef = useRef<HTMLInputElement>(null);
   const rf = useReactFlow();
@@ -385,7 +388,26 @@ const Editor: React.FC<Props> = ({ somenteLeitura, onToast, chave = 'jornada' })
     });
   };
 
-  if (!carregado) return erro ? <AvisoErro mensagem={erro} onFechar={() => setErro(null)} /> : <Loader2 className="w-4 h-4 animate-spin text-stone-400" />;
+  /** IA lê o quadro e devolve a automação refeita pelo pedido; troca o quadro (só grava no Salvar). Erro: aviso flutuante, o pedido fica */
+  const refazerComIa = async () => {
+    if (!pedidoIa.trim()) throw new Error('Escreva o que a IA deve mudar na automação.');
+    setErro(null);
+    try {
+      const r = await refazerJornadaIa(chave, jornadaAtual, pedidoIa.trim());
+      const j = { ativo, modo, numeros_teste: [], nos: r.nos, ligacoes: r.ligacoes } as Jornada;
+      setNodes(paraNos(j));
+      setEdges(paraLigacoes(j));
+      setSelecionado(null);
+      setTimeout(() => rf.fitView({ padding: 0.2, maxZoom: 1 }), 50);
+      setPedidoIa('');
+      onToast(`${r.explicacao || 'Automação refeita pela IA.'} Confira e clique em Salvar automação.`);
+    } catch (err: any) {
+      setErro(err.message);
+    }
+    setPedindoIa(false);
+  };
+
+  if (!carregado) return erro ?<AvisoErro mensagem={erro} onFechar={() => setErro(null)} /> : <Loader2 className="w-4 h-4 animate-spin text-stone-400" />;
 
   return (
     <DepartamentosCtx.Provider value={departamentos}>
@@ -409,6 +431,15 @@ const Editor: React.FC<Props> = ({ somenteLeitura, onToast, chave = 'jornada' })
           )}
           {!somenteLeitura && (
             <div className="flex gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={() => setPedindoIa(true)}
+                disabled={transferindo}
+                title="Diga o que mudar: a IA lê a automação do quadro e refaz conforme o pedido (só grava ao Salvar)"
+                className="flex items-center gap-2 border border-fuchsia-300 dark:border-fuchsia-800 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-50 dark:hover:bg-fuchsia-950/40 px-4 py-2.5 rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-4 h-4" /> IA
+              </button>
               <button
                 type="button"
                 onClick={exportar}
@@ -547,6 +578,28 @@ const Editor: React.FC<Props> = ({ somenteLeitura, onToast, chave = 'jornada' })
           Arraste da bolinha azul embaixo de um nó até outro nó para ligar. Clique num nó para editar; Delete exclui o que estiver selecionado. Nada muda no WhatsApp
           até Salvar.
         </p>
+
+        {pedindoIa && (
+          <ConfirmDialog
+            titulo="Refazer a automação com a IA"
+            mensagem="A IA lê a automação do quadro e devolve ela refeita com o seu pedido. O quadro é substituído, mas nada muda no WhatsApp até você clicar em Salvar automação."
+            confirmar="Refazer com a IA"
+            tom="normal"
+            onConfirmar={refazerComIa}
+            onCancelar={() => setPedindoIa(false)}
+          >
+            <label htmlFor="jor-pedido-ia" className={LABEL_CLASS}>O que mudar</label>
+            <textarea
+              id="jor-pedido-ia"
+              autoFocus
+              rows={5}
+              value={pedidoIa}
+              onChange={(e) => setPedidoIa(e.target.value)}
+              placeholder="Ex.: depois do Início, pergunte o nome do cliente e use o nome na mensagem de boas-vindas; fora do horário, crie uma tarefa para o Comercial."
+              className={`${campo} resize-y`}
+            />
+          </ConfirmDialog>
+        )}
 
         {confirmacao && (
           <ConfirmDialog
@@ -853,6 +906,43 @@ const PainelNo: React.FC<PainelProps> = ({ no, somenteLeitura, departamentos, va
           <span className={HINT_CLASS}>
             Sem cadastro, a pessoa entra como lead. Já tendo negócio aberto nesse funil, usa ele; senão abre um novo para o vendedor do revezamento, com a atividade
             "Prospecção pelo WhatsApp". Vindo de uma campanha, o negócio fica ligado a ela.
+          </span>
+        </>
+      )}
+
+      {tipo === 'pedido' && (
+        <>
+          <div className={FIELD_CLASS}>
+            <label htmlFor={id('status')} className={LABEL_CLASS}>Status do pedido</label>
+            <SelectAuto id={id('status')} value={d.status ?? 'aguardando_aprovacao'} onChange={(e) => set({ status: e.target.value })} className={`${campo} cursor-pointer`}>
+              {STATUS_PEDIDO.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </SelectAuto>
+          </div>
+          {textoCom('observacao', 'Observação do pedido (opcional)', 3)}
+          <Toggle
+            checked={d.estoque !== false}
+            onChange={(v) => set({ estoque: v })}
+            label={<span className="text-xs text-stone-700 dark:text-stone-200">Conferir estoque e oferecer similares</span>}
+          />
+          <Toggle
+            checked={d.sugestoes !== false}
+            onChange={(v) => set({ sugestoes: v })}
+            label={<span className="text-xs text-stone-700 dark:text-stone-200">Oferecer produtos sugeridos</span>}
+          />
+          <span className={HINT_CLASS}>
+            Estoque: produto sem saldo na filial para a quantidade pedida não entra; o cliente escolhe um dos similares do cadastro de produtos (com saldo) ou
+            aceita a quantidade que tem. Sugeridos: no resumo final, até 3 produtos da lista de sugestões dos itens (com saldo), sem repetir na conversa.
+          </span>
+          <span className={HINT_CLASS}>
+            Usa a chave e o modelo de Configurações › IA. Coloque depois de o cliente dizer o que quer (ex.: uma Pergunta "O que você deseja?"). A IA lê a conversa, acha cada
+            produto no cadastro (aceita plural, erro de digitação e apelido; com o preço de tabela) e manda o resumo com o total para o cliente confirmar. Se ele corrigir
+            algo, ou se um item servir para mais de um produto (ex.: "cerveja"), ela pergunta e manda o resumo de novo. Só grava depois do "sim"; sem cadastro, o cliente
+            entra como lead e vira cliente, com negócio e atividade para o vendedor. Depois use {'{{pedido_numero}}'}, {'{{pedido_total}}'}, {'{{pedido_itens}}'} e{' '}
+            {'{{pedido_faltou}}'} (o que não achou) numa Mensagem. Nenhum produto achado (ou 6 resumos sem confirmar): saída "não achou produtos".
           </span>
         </>
       )}

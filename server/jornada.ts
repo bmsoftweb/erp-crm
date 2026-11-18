@@ -9,10 +9,12 @@ import { campanhaDaConversa, contextoDeCampanha } from './campanhas.js';
 import {
   avisarDepartamento,
   avisarFalha,
+  conversarIa,
   escolhaDoTexto,
   escolhaPelaIa,
   gerarRespostaIa,
   iaComOpcoes,
+  pedidoDaConversa,
   lerChatbot,
   temChave,
   marcarEvento,
@@ -22,6 +24,8 @@ import {
   type ConfigChatbot,
   type Contexto,
   type OpcaoMenu,
+  type ItemPedido,
+  type PropostaPedido,
 } from './chatbot.js';
 import { TEXTO_ENCERRAMENTO as ENCERRADA_POR_INATIVIDADE } from './inatividade.js';
 import { notificar } from './notificacoes.js';
@@ -44,8 +48,51 @@ const MAX_PASSOS = 50;
 const MAX_ARQUIVO = 3 * 1024 * 1024;
 /** Estado da conversa depois de um nó Fim (ou saída sem ligação) */
 const FIM = '__fim';
+/** Resumos do pedido sem o cliente confirmar: depois disso o nó "Registrar pedido" sai por "erro" */
+const MAX_RESUMOS_PEDIDO = 6;
 
-export const TIPOS_NO = ['inicio', 'mensagem', 'imagem', 'menu', 'pergunta', 'condicao', 'case', 'esperar', 'api', 'ia', 'iaex', 'lead', 'prospeccao', 'tarefa', 'departamento', 'fim'] as const;
+const reais = (n: number) => `R$ ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const qtdTexto = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+const valorItem = (i: ItemPedido) => Math.round(i.quantidade * i.preco_unitario * 100) / 100;
+const linhaPedido = (i: ItemPedido) => `${qtdTexto(i.quantidade)} x ${i.nome} — ${reais(valorItem(i))}`;
+
+/** Produtos que apareceram no resumo (itens, opções, similares e sugestões): o cliente pode responder citando um deles */
+const produtosDoResumo = (p: PropostaPedido): number[] => [
+  ...new Set([
+    ...p.itens,
+    ...p.duvidas.flatMap((d) => d.opcoes),
+    ...(p.semEstoque ?? []).flatMap((f) => [f.item, ...f.opcoes]),
+    ...(p.sugestoes ?? []),
+  ].map((i) => i.produto_id)),
+];
+
+/** Resumo do pedido para o cliente confirmar: itens e total, as dúvidas numeradas e o que não foi achado */
+export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'faltou'> & Partial<Pick<PropostaPedido, 'semEstoque' | 'sugestoes'>>): string {
+  const partes: string[] = [];
+  const opcoesNumeradas = (lista: ItemPedido[]) => lista.map((o, i) => `${i + 1}) ${o.nome} — ${reais(o.preco_unitario)}`).join('\n');
+  if (p.itens.length) {
+    const total = Math.round(p.itens.reduce((s, i) => s + valorItem(i), 0) * 100) / 100;
+    partes.push(`Confira o seu pedido:\n${p.itens.map(linhaPedido).join('\n')}\nTotal: ${reais(total)}`);
+  }
+  for (const d of p.duvidas) {
+    partes.push(`Sobre "${d.texto}" (${qtdTexto(d.quantidade)}), qual destes?\n${opcoesNumeradas(d.opcoes)}`);
+  }
+  for (const f of p.semEstoque ?? []) {
+    const aviso = f.disponivel > 0 ? `${f.item.nome}: só temos ${qtdTexto(f.disponivel)} no estoque (você pediu ${qtdTexto(f.item.quantidade)}).` : `${f.item.nome} está sem estoque.`;
+    partes.push(f.opcoes.length ? `${aviso} Posso trocar por:\n${opcoesNumeradas(f.opcoes)}` : aviso);
+  }
+  if (p.faltou.length) partes.push(`Não encontrei: ${p.faltou.join(', ')}.`);
+  const pendente = p.duvidas.length || p.semEstoque?.length;
+  if (!pendente && p.sugestoes?.length) partes.push(`Aproveite também:\n${opcoesNumeradas(p.sugestoes)}`);
+  partes.push(
+    pendente
+      ? 'Me diga como você prefere (e se quer mudar mais alguma coisa).'
+      : `Está certo? Responda "sim" para confirmar, ou me diga o que mudar${p.sugestoes?.length ? ' (ou o que incluir dos sugeridos)' : ''}.`,
+  );
+  return partes.join('\n\n');
+}
+
+export const TIPOS_NO = ['inicio', 'mensagem', 'imagem', 'menu', 'pergunta', 'condicao', 'case', 'esperar', 'api', 'ia', 'iaex', 'lead', 'prospeccao', 'tarefa', 'pedido', 'departamento', 'fim'] as const;
 export type TipoNo = (typeof TIPOS_NO)[number];
 
 export interface No {
@@ -80,6 +127,8 @@ export function saidasDoNo(no: Pick<No, 'tipo' | 'dados'>): string[] {
       return [...(no.dados.casos ?? []).map((c: any) => String(c.id)), 'nenhum'];
     case 'api':
       return ['sucesso', 'erro'];
+    case 'pedido':
+      return ['sucesso', 'cancelado', 'erro'];
     case 'ia':
       return ['humano'];
     case 'iaex':
@@ -275,6 +324,14 @@ function prepararDados(tipo: TipoNo, d: any, id: string, anterior: Jornada | nul
       if (!String(d.assunto ?? '').trim()) throw erro('informe o assunto da tarefa.');
       return { ...base, departamento_id, assunto: texto(d.assunto, 255), observacao: texto(d.observacao, 2000) };
     }
+    case 'pedido':
+      return {
+        ...base,
+        status: ['rascunho', 'aguardando_aprovacao', 'aprovado'].includes(d.status) ? d.status : 'aguardando_aprovacao',
+        observacao: texto(d.observacao, 1000),
+        estoque: d.estoque !== false,
+        sugestoes: d.sugestoes !== false,
+      };
     case 'departamento': {
       const departamento_id = Number(d.departamento_id);
       if (!Number.isInteger(departamento_id) || departamento_id < 1) throw erro('escolha o departamento.');
@@ -641,6 +698,8 @@ class Execucao {
         return this.ia(no);
       case 'iaex':
         return this.iaex(no, false);
+      case 'pedido':
+        return this.pedido(no, false);
       case 'esperar':
         if (!no.dados.interromper) return null;
         this.estado.retomar = 'limpar';
@@ -711,6 +770,82 @@ class Execucao {
     if (Number(this.estado.vars._iaex) >= (Number(no.dados.tentativas) || 3)) return nenhuma();
     await this.enviar(r.mensagem || 'Desculpe, não entendi. Pode me dizer com outras palavras o que você precisa?');
     return null;
+  }
+
+  /**
+   * Nó "Registrar pedido": monta o pedido com os produtos da conversa, manda o resumo e espera o cliente confirmar.
+   * A resposta pode corrigir itens ou escolher entre opções: o pedido é remontado e o resumo vai de novo.
+   * Confirmado, grava exatamente o resumo que o cliente viu
+   */
+  private async pedido(no: No, abertura: boolean): Promise<No | null | 'fim'> {
+    const v = this.estado.vars;
+    const sair = (saida: 'sucesso' | 'cancelado' | 'erro') => {
+      delete v._pedido;
+      delete v._pedido_voltas;
+      delete v._pedido_oferecidos;
+      return this.destino(no, saida) ?? 'fim';
+    };
+    if (abertura) Object.assign(v, { pedido_numero: '', pedido_total: '', pedido_itens: '', pedido_faltou: '', _pedido_voltas: 0 });
+    if (!temChave(this.bot)) {
+      await this.falha(no, 'sem a chave da IA (Configurações › IA).');
+      return sair('erro');
+    }
+    try {
+      void mostrarDigitando(this.ctx.empresaId, this.ctx.telefone, 3000, this.ctx.numero);
+      const visto: PropostaPedido | null = !abertura && v._pedido ? JSON.parse(v._pedido) : null;
+      const oferecidos: number[] = v._pedido_oferecidos ? JSON.parse(v._pedido_oferecidos) : [];
+      const p = await pedidoDaConversa(this.ctx, this.bot!, {
+        estoque: no.dados.estoque !== false,
+        sugestoes: no.dados.sugestoes !== false,
+        jaOferecidos: oferecidos,
+        extras: visto ? produtosDoResumo(visto) : [],
+      });
+      if (visto && p.situacao === 'cancelou') return sair('cancelado');
+      if (visto && p.situacao === 'confirmou' && visto.itens.length && !visto.duvidas.length && !visto.semEstoque?.length) {
+        await this.gravarPedido(no, visto);
+        return sair('sucesso');
+      }
+      v.pedido_faltou = p.faltou.join(', ');
+      if (!p.itens.length && !p.duvidas.length && !p.semEstoque.length) return sair('erro');
+      v._pedido_voltas = (Number(v._pedido_voltas) || 0) + 1;
+      if (v._pedido_voltas > MAX_RESUMOS_PEDIDO) {
+        await this.falha(no, `o cliente não confirmou o pedido depois de ${MAX_RESUMOS_PEDIDO} resumos.`);
+        return sair('erro');
+      }
+      v._pedido = JSON.stringify(p);
+      v._pedido_oferecidos = JSON.stringify([...oferecidos, ...p.sugestoes.map((s) => s.produto_id)]);
+      await this.enviar(resumoPedido(p));
+      return null;
+    } catch (err: any) {
+      delete v._pedido;
+      delete v._pedido_voltas;
+      delete v._pedido_oferecidos;
+      return this.iaFalhou(no, `registrar pedido: ${err.message}`);
+    }
+  }
+
+  /** Grava o pedido confirmado; sem cadastro, o cliente entra como lead e vira cliente, com negócio e atividade para o vendedor */
+  private async gravarPedido(no: No, p: PropostaPedido) {
+    const v = this.estado.vars;
+    const vars = await this.vars();
+    const lista = p.itens.map(linhaPedido).join('\n');
+    const faltouTxt = p.faltou.length ? `\nNão achados no cadastro: ${p.faltou.join(', ')}.` : '';
+    const lead: any = await registrarLead(
+      this.ctx,
+      { nome: String(vars.nome || '').trim() || 'Cliente do WhatsApp', interesse: 'Pedido pelo WhatsApp' },
+      { assunto: 'Pedido pelo WhatsApp', observacao: `Itens:\n${lista}${faltouTxt}` },
+    );
+    // Sem funil o negócio não abre, mas a pessoa já foi cadastrada: o pedido sai mesmo assim
+    if (!this.ctx.dono.pessoa_id) throw new Error(lead?.erro || 'não foi possível cadastrar o cliente.');
+    const { criarPedido } = await import('./crm.js'); // dinâmico: crm.ts → ... → jornada.ts fecharia um ciclo de imports
+    const r = await criarPedido(String(this.ctx.empresaId), {
+      pessoa_id: this.ctx.dono.pessoa_id,
+      negocio_id: lead?.negocio_id ?? null,
+      status: no.dados.status || 'aguardando_aprovacao',
+      observacoes: [preencher(no.dados.observacao ?? '', vars).trim(), `Pedido pelo WhatsApp (${vars.telefone}), confirmado pelo cliente.${faltouTxt}`].filter(Boolean).join('\n'),
+      itens: p.itens,
+    });
+    Object.assign(v, { pedido_numero: String(r.numero), pedido_total: reais(r.total), pedido_itens: lista });
   }
 
   /** Executa a partir do nó até um que espere o cliente, uma pausa ou o fim */
@@ -827,6 +962,9 @@ WhatsApp: ${v.telefone}`.trim(),
           no = seguir();
           break;
         }
+        case 'pedido':
+          no = await this.pedido(no, true);
+          break;
         case 'departamento': {
           const [dep] = await pool.query<any[]>('SELECT id, nome FROM crm_departamentos WHERE id = ? AND empresa_id = ?', [d.departamento_id, this.ctx.empresaId]);
           await this.enviar(preencher(d.texto ?? '', await this.vars()));
@@ -1057,5 +1195,84 @@ export function createJornadaRouter(): Router {
     }
   });
 
+  // IA: lê a automação do quadro e devolve outra, refeita conforme o pedido (a tela mostra e só grava em "Salvar")
+  router.post('/jornada/ia', async (req: Request, res: Response) => {
+    try {
+      somenteAdmin(res);
+      const pedido = String(req.body?.pedido ?? '').trim().slice(0, 4000);
+      if (!pedido) return res.status(400).json({ error: 'Escreva o que a IA deve mudar na automação.' });
+      const conta: ContaWhats = req.body?.chave === 'jornada_campanhas' ? 'campanhas' : 'provedor';
+      res.json(await refazerComIa(res.locals.empresaId, conta, req.body?.jornada, pedido));
+    } catch (err: any) {
+      res.status(err.status || 400).json({ error: err.message });
+    }
+  });
+
   return router;
+}
+
+const FORMATO_NOS = `Tipos de nó (campo "dados" de cada um) e as saídas (campo "saida" das ligações):
+- inicio: {}. Saída "proximo". Exatamente um; nenhuma ligação chega nele.
+- mensagem: {texto}. Envia o texto e segue. Saída "proximo".
+- imagem: {arquivo_id, arquivo_nome, url, legenda}. Imagem enviada (arquivo_id) ou link https (url). Saída "proximo". Mantenha arquivo_id dos nós que já existem; nó novo só com url https.
+- menu: {texto, opcoes:[{id, rotulo}], invalida}. 1 a 9 opções numeradas; espera a resposta. Saídas: o id de cada opção e "invalida" (não entendeu).
+- pergunta: {texto, variavel}. Pergunta e guarda a resposta em {{variavel}} (letras, números e _). Saída "proximo".
+- condicao: {tipo:"horario"|"cadastrado"|"negocio"|"variavel", dias:[0-6, 0=domingo], das:"HH:MM", ate:"HH:MM", variavel, operador, valor}. horario = dentro do horário de atendimento; cadastrado = cliente já cadastrado; negocio = tem negócio aberto; variavel = compara {{variavel}} com valor. Saídas "sim" e "nao".
+- case: {variavel, casos:[{id, operador, valor, rotulo}]}. 1 a 20 casos; o primeiro que bater decide. Saídas: o id de cada caso e "nenhum".
+- esperar: {minutos (1 a 43200), interromper (true = segue antes se o cliente escrever)}. Saída "proximo".
+- api: {metodo, url (https://), cabecalhos:[{nome, valor, secreto}], corpo, extrair:[{caminho, variavel}]}. Saídas "sucesso" e "erro". Mantenha os cabeçalhos dos nós que já existem como estão.
+- ia: {texto}. A IA conversa pelo texto-base até passar para humano. Saída "humano".
+- iaex: {texto, opcoes:[{id, rotulo}], tentativas (1 a 10)}. A IA conversa até entender qual opção o cliente quer; rotulo diz quando a opção vale. Saídas: o id de cada opção e "nenhuma".
+- lead: {nome, empresa, email, interesse}. Cadastra pessoa, negócio e atividade (use variáveis, ex.: "{{nome}}"). Saída "proximo".
+- prospeccao: {funil_id, etapa_id, negocio, nome, empresa, email, observacao}. Abre negócio no funil/etapa (null = o primeiro). Saída "proximo".
+- tarefa: {departamento_id, assunto, observacao}. Cria tarefa para alguém retornar o contato. Saída "proximo".
+- pedido: {status:"rascunho"|"aguardando_aprovacao"|"aprovado", observacao, estoque (true = confere o saldo e oferece os similares do cadastro quando falta), sugestoes (true = oferece as sugestões do cadastro junto)}. A IA lê a conversa, acha no cadastro os produtos e quantidades que o cliente pediu, manda o resumo e espera o cliente confirmar (corrige e pergunta de novo quando ele muda algo ou quando um item serve para mais de um produto); confirmado, grava o pedido. Saídas "sucesso" (gravado), "cancelado" (cliente desistiu) e "erro" (nenhum produto achado). Cria {{pedido_numero}}, {{pedido_total}}, {{pedido_itens}} e {{pedido_faltou}} (o que não achou). Use depois de o cliente dizer o que quer (ex.: uma pergunta "O que você deseja?").
+- departamento: {departamento_id, texto}. Passa para um humano do departamento. Sem saídas (fim da automação).
+- fim: {texto}. Encerra (mensagem opcional). Sem saídas.
+Todo nó pode ter dados.titulo (até 60 caracteres) para nomeá-lo no quadro.
+Operadores: igual, diferente, contem, comeca, maior, menor, vazio, preenchido, regex.
+Variáveis prontas: {{nome}}, {{telefone}}, {{numero}}, {{mensagem}} (última mensagem do cliente), {{departamento}}, {{motivo}}, {{api_status}}; mais as de pergunta/api, {{ia_opcao}} (iaex) e {{horario}} (condição de horário).`;
+
+/** Pede à IA a automação refeita; confere com a mesma validação da gravação e, se não passar, pede de novo uma vez com o erro */
+async function refazerComIa(empresaId: string | number, conta: ContaWhats, atual: any, pedido: string) {
+  const cfg = await lerChatbot(empresaId);
+  if (!temChave(cfg)) throw Object.assign(new Error('Configure a IA em Configurações › IA antes de usar a IA na automação.'), { status: 400 });
+  const [deps] = await pool.query<any[]>('SELECT id, nome FROM crm_departamentos WHERE empresa_id = ? AND ativo = 1 ORDER BY nome', [empresaId]);
+  const [etapas] = await pool.query<any[]>(
+    'SELECT f.id AS funil_id, f.nome AS funil, e.id AS etapa_id, e.nome AS etapa FROM crm_funis f JOIN crm_etapas e ON e.funil_id = f.id WHERE f.empresa_id = ? ORDER BY f.ordem, e.ordem',
+    [empresaId],
+  );
+  const quadro = { nos: Array.isArray(atual?.nos) ? atual.nos : [], ligacoes: Array.isArray(atual?.ligacoes) ? atual.ligacoes : [] };
+  const anterior = await lerJornada(empresaId, conta);
+  const system = `Você edita automações de atendimento por WhatsApp de um CRM: um fluxo de nós ligados, começando no nó Início.
+Recebe a automação atual (JSON) e o pedido do usuário, e devolve a automação inteira já com o pedido aplicado.
+
+Responda só com JSON, sem texto em volta: {"nos":[...],"ligacoes":[...],"explicacao":"..."}
+- nos: [{id, tipo, x, y, dados}]. id: letras, números, _ ou - (até 40). Mantenha id, posição e dados dos nós que não
+  precisam mudar; crie ids novos só para nós novos (ex.: "ia1", "ia2"). Ids de opções/casos seguem a mesma regra.
+- ligacoes: [{de, saida, para}]. Cada saída de um nó liga em no máximo um nó; saída sem ligação encerra a automação.
+- Posições (x, y) para o quadro ficar legível: o fluxo desce (y cresce uns 160 por nível) e ramos lado a lado (x a cada uns 300).
+- explicacao: em português, curta (até 3 frases), o que você mudou.
+- Textos ao cliente em português, cordiais e curtos. Mude só o necessário para atender o pedido.
+- Se o pedido não for sobre a automação ou não der para atender, devolva a automação atual sem mudanças e explique.
+
+${FORMATO_NOS}
+
+Departamentos (departamento_id): ${deps.length ? deps.map((d) => `${d.id} = ${d.nome}`).join('; ') : 'nenhum cadastrado'}.
+Funis e etapas (funil_id/etapa_id): ${etapas.length ? etapas.map((e) => `${e.funil_id}/${e.etapa_id} = ${e.funil} › ${e.etapa}`).join('; ') : 'nenhum cadastrado'}.`;
+
+  let falas: { de: 'pessoa' | 'ia'; texto: string }[] = [{ de: 'pessoa', texto: `Automação atual:\n${JSON.stringify(quadro)}\n\nPedido: ${pedido}` }];
+  for (let tentativa = 0; ; tentativa++) {
+    const r = await conversarIa(cfg, system, falas, [], 32_000);
+    try {
+      const j = JSON.parse(/\{[\s\S]*\}/.exec(r.texto)?.[0] ?? '{}');
+      const nova = { nos: j.nos, ligacoes: j.ligacoes };
+      if (!Array.isArray(nova.nos) || !nova.nos.length) throw new Error('a resposta não trouxe os nós.');
+      prepararJornada({ ...nova, ativo: false }, anterior);
+      return { ...nova, explicacao: String(j.explicacao ?? '').trim() };
+    } catch (err: any) {
+      if (tentativa >= 1) throw Object.assign(new Error(`A IA não conseguiu montar a automação: ${err.message}`), { status: 400 });
+      falas = [...falas, { de: 'ia', texto: r.texto }, { de: 'pessoa', texto: `A automação devolvida tem um erro: ${err.message} Corrija e responda de novo só com o JSON completo.` }];
+    }
+  }
 }

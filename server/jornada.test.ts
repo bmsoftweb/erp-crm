@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { agoraBrasilia, comparar, dentroDoHorario, descreverHorario, ipInterno, jornadaPublica, pegar, preencher, prepararJornada, saidasDoNo } from './jornada.js';
+import { agoraBrasilia, comparar, dentroDoHorario, descreverHorario, ipInterno, jornadaPublica, pegar, preencher, prepararJornada, resumoPedido, saidasDoNo } from './jornada.js';
 
 const inicio = { id: 'inicio', tipo: 'inicio', x: 0, y: 0, dados: {} };
 const menu = { id: 'm1', tipo: 'menu', x: 0, y: 100, dados: { texto: 'Escolha:', opcoes: [{ id: 'o1', rotulo: 'Vendas' }, { id: 'o2', rotulo: 'Suporte' }] } };
@@ -12,6 +12,38 @@ assert.strictEqual(ok.nos.length, 3);
 assert.deepStrictEqual(saidasDoNo(ok.nos[1]), ['o1', 'o2', 'invalida']);
 assert.deepStrictEqual(saidasDoNo({ tipo: 'api', dados: {} }), ['sucesso', 'erro']);
 assert.deepStrictEqual(saidasDoNo({ tipo: 'fim', dados: {} }), []);
+// Registrar pedido: sucesso/erro; status fora da lista vira "aguardando_aprovacao"
+assert.deepStrictEqual(saidasDoNo({ tipo: 'pedido', dados: {} }), ['sucesso', 'cancelado', 'erro']);
+// Resumo para o cliente confirmar: total pela soma dos itens arredondados, dúvidas numeradas e o que faltou
+const cerveja = { produto_id: 52, nome: 'CERVEJA LATA 473ML', quantidade: 5, preco_unitario: 6 };
+const resumo = resumoPedido({
+  itens: [cerveja, { produto_id: 63, nome: 'CAFE 500G', quantidade: 1, preco_unitario: 18.9 }],
+  duvidas: [{ texto: 'refri', quantidade: 2, opcoes: [{ ...cerveja, produto_id: 1, nome: 'COCA 2L', preco_unitario: 12 }, { ...cerveja, produto_id: 2, nome: 'GUARANA 2L', preco_unitario: 9.5 }] }],
+  faltou: ['abacaxi voador'],
+});
+assert.match(resumo, /5 x CERVEJA LATA 473ML — R\$ 30,00/);
+assert.match(resumo, /Total: R\$ 48,90/);
+assert.match(resumo, /Sobre "refri" \(2\), qual destes\?\n1\) COCA 2L — R\$ 12,00\n2\) GUARANA 2L — R\$ 9,50/);
+assert.match(resumo, /Não encontrei: abacaxi voador\./);
+assert.match(resumo, /Me diga como você prefere/);
+assert.match(resumoPedido({ itens: [cerveja], duvidas: [], faltou: [] }), /Responda "sim" para confirmar/);
+// Sem estoque: saldo parcial com similares, ou zerado; sugestões só aparecem sem pendência
+const agua = { produto_id: 57, nome: 'AGUA 500ML', quantidade: 30, preco_unitario: 2 };
+const semEstoque = resumoPedido({
+  itens: [cerveja],
+  duvidas: [],
+  faltou: [],
+  semEstoque: [{ item: agua, disponivel: 24, opcoes: [{ ...agua, produto_id: 59, nome: 'AGUA 1,5L', preco_unitario: 3.5 }] }, { item: { ...agua, nome: 'FEIJAO 1KG' }, disponivel: 0, opcoes: [] }],
+  sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }],
+});
+assert.match(semEstoque, /AGUA 500ML: só temos 24 no estoque \(você pediu 30\)\. Posso trocar por:\n1\) AGUA 1,5L — R\$ 3,50/);
+assert.match(semEstoque, /FEIJAO 1KG está sem estoque\./);
+assert.doesNotMatch(semEstoque, /Aproveite também/);
+const comSugestao = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [], sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }] });
+assert.match(comSugestao, /Aproveite também:\n1\) OLEO 900ML — R\$ 8,50/);
+assert.match(comSugestao, /ou o que incluir dos sugeridos/);
+const comPedido = prepararJornada({ ...base, nos: [inicio, { id: 'pd', tipo: 'pedido', x: 0, y: 0, dados: { status: 'faturado' } }], ligacoes: [{ de: 'inicio', saida: 'proximo', para: 'pd' }] }, null);
+assert.strictEqual(comPedido.nos[1].dados.status, 'aguardando_aprovacao');
 
 // Erros de estrutura
 assert.throws(() => prepararJornada({ ...base, nos: [menu, fim] }, null), /exatamente um nó Início/);

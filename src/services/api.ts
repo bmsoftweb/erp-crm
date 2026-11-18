@@ -387,6 +387,12 @@ export const salvarPermissoes = (usuarioId: number, permissoes: string[] | null)
 /** Imagem do nó "Enviar imagem" da jornada (base64 sem o prefixo data:) */
 export const enviarArquivoJornada = (nome: string, mimetype: string, base64: string): Promise<{ id: number; nome: string }> =>
   enviar('POST', '/api/jornada/arquivos', { nome, mimetype, base64 });
+/** IA refaz a automação do quadro conforme o pedido (só devolve; gravar é no Salvar) */
+export const refazerJornadaIa = (
+  chave: string,
+  jornada: { nos: unknown[]; ligacoes: unknown[] },
+  pedido: string,
+): Promise<{ nos: any[]; ligacoes: any[]; explicacao: string }> => enviar('POST', '/api/jornada/ia', { chave, jornada, pedido });
 /** Imagem da jornada como endereço local (blob:) para mostrar no editor */
 export async function fetchArquivoJornada(id: number): Promise<string> {
   const res = await fetch(`/api/jornada/arquivos/${id}`, { headers: headers() });

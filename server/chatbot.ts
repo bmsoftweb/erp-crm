@@ -8,7 +8,7 @@ import { aposGravar, sincronizarNegocio } from './regras.js';
 import { chaveTelefone, CONTATO_RECENTE, contaDaConversa, donoDoTelefone, PESSOA_RECENTE, enviarAutomatica, enviarReservada, enviarWhatsApp, mostrarDigitando, reservarEnvio, telefoneWhatsApp, type ContaWhats, type Dono, type MensagemNova } from './whatsapp.js';
 import { refProposta } from '../src/utils/formatters.js';
 import { campanhaDaConversa, PEDIU_SAIR, type CampanhaDaConversa } from './campanhas.js';
-import { CONTATOS, EMPRESAS, PESSOAS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
+import { CONTATOS, DO_GRUPO, EMPRESAS, PESSOAS, PRODUTOS, USUARIOS, USUARIOS_FILIAL } from './erp.js';
 
 /**
  * Chatbot do WhatsApp com IA (Gemini, Claude ou DeepSeek, à escolha da empresa). Configuração em Configurações › Chatbot (tabela config,
@@ -610,7 +610,242 @@ ${opcoes.observacao}` : ''}`,
       registroId: Number(atividadeLead.insertId),
     });
   }
-  return { ok: true, vendedor_responsavel: vendedor ?? 'a equipe' };
+  return { ok: true, vendedor_responsavel: vendedor ?? 'a equipe', negocio_id: negocioId };
+}
+
+const jsonDaIa = (t: string): any => {
+  try {
+    return JSON.parse(/\{[\s\S]*\}/.exec(t)?.[0] ?? '{}');
+  } catch {
+    return {};
+  }
+};
+
+/** Catálogo até este tamanho vai inteiro para a IA (pega plural, erro de digitação, apelido); acima, só os candidatos da busca */
+const CATALOGO_INTEIRO = 300;
+
+export interface ItemPedido {
+  produto_id: number;
+  nome: string;
+  quantidade: number;
+  preco_unitario: number;
+}
+export interface PropostaPedido {
+  /** confirmou / cancelou: a última mensagem do cliente responde ao último resumo do pedido mandado pela empresa */
+  situacao: 'pedindo' | 'confirmou' | 'cancelou';
+  itens: ItemPedido[];
+  /** Itens que servem para mais de um produto: o cliente escolhe */
+  duvidas: { texto: string; quantidade: number; opcoes: ItemPedido[] }[];
+  /** Pedidos sem produto no cadastro */
+  faltou: string[];
+  /** Itens sem saldo para a quantidade pedida (fora de itens), com os similares do cadastro que têm saldo */
+  semEstoque: { item: ItemPedido; disponivel: number; opcoes: ItemPedido[] }[];
+  /** Sugestões do cadastro (venda casada) para os itens, com saldo; só quando nada está pendente */
+  sugestoes: ItemPedido[];
+}
+type ProdutoCadastro = { id: number; nome: string; codigo_sku: string | null; preco_tabela: unknown; servico?: unknown };
+export interface OpcoesPedido {
+  /** Confere o saldo na filial (padrão: sim) */
+  estoque?: boolean;
+  /** Oferece as sugestões do cadastro (padrão: sim) */
+  sugestoes?: boolean;
+  /** Sugestões já oferecidas nesta conversa: não repete */
+  jaOferecidos?: number[];
+  /** Produtos do último resumo: entram no catálogo da IA mesmo no catálogo grande (o cliente responde "a 1") */
+  extras?: number[];
+}
+
+/** Saldo disponível (quantidade − reservado) por produto na filial, somando lotes; localização virtual não conta (a regra do erp-estoque) */
+async function disponivelNaFilial(ids: number[], empresaId: string | number): Promise<Map<number, number>> {
+  const r = new Map<number, number>();
+  if (!ids.length) return r;
+  const [rows] = await pool.query<any[]>(
+    `SELECT l.produto_id, SUM(s.quantidade - s.reservado) AS disponivel
+       FROM est_estoque_saldo s
+       JOIN cad_produtos_lotes l ON l.id = s.lote_id
+       JOIN cad_produtos_localizacoes c ON c.id = s.localizacao_id AND c.empresa_id = ? AND c.tipo <> 'virtual'
+      WHERE l.produto_id IN (?)
+      GROUP BY l.produto_id`,
+    [empresaId, ids],
+  );
+  for (const x of rows) r.set(Number(x.produto_id), Number(x.disponivel));
+  return r;
+}
+
+/** Tem saldo para a quantidade (serviço não tem estoque) */
+const temSaldo = (p: { servico?: unknown }, disponivel: number | undefined, quantidade: number) => Number(p.servico) === 1 || (disponivel ?? 0) >= quantidade;
+
+/**
+ * Produtos ligados no cadastro do ERP, ativos e com saldo, na ordem do cadastro:
+ * similares = no lugar do produto (cad_produtos_similares); sugestoes = junto com ele (cad_produtos_sugestoes)
+ */
+async function relacionados(tipo: 'similares' | 'sugestoes', ids: number[], empresaId: string | number): Promise<Map<number, ItemPedido[]>> {
+  const r = new Map<number, ItemPedido[]>();
+  if (!ids.length) return r;
+  const [tabela, coluna] = tipo === 'similares' ? ['cad_produtos_similares', 'similar_id'] : ['cad_produtos_sugestoes', 'sugerido_id'];
+  let rows: any[];
+  try {
+    [rows] = await pool.query<any[]>(
+      `SELECT r.produto_id AS origem, t.id, t.nome, t.preco_tabela, t.servico
+         FROM ${tabela} r JOIN ${PRODUTOS} t ON t.id = r.${coluna}
+        WHERE r.produto_id IN (?) AND t.ativo = 1 AND ${DO_GRUPO('t.grupo_empresas_id')}
+        ORDER BY r.ordem, t.nome`,
+      [ids, empresaId],
+    );
+  } catch (e: any) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return r; // tabela ainda não criada no banco da empresa
+    throw e;
+  }
+  const saldo = await disponivelNaFilial([...new Set(rows.map((x) => Number(x.id)))], empresaId);
+  for (const x of rows) {
+    if (!temSaldo(x, saldo.get(Number(x.id)), 1)) continue;
+    const lista = r.get(Number(x.origem)) ?? [];
+    lista.push({ produto_id: Number(x.id), nome: x.nome, quantidade: 1, preco_unitario: Number(x.preco_tabela) || 0 });
+    r.set(Number(x.origem), lista);
+  }
+  return r;
+}
+
+const PROMPT_PEDIDO = `Você monta o pedido de um cliente a partir de uma conversa de WhatsApp com a empresa, usando só os produtos do cadastro.
+Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>]}]}
+- itens: tudo o que o cliente quer comprar, já com as correções que ele fez na conversa (quantidade nova, item trocado ou
+  retirado). Quantidade não dita = 1. Produto de que ele desistiu ou que só perguntou o preço não entra. Um item por produto.
+- produto_id: o produto do cadastro que é com certeza o que o cliente pediu. Aceite plural, erro de digitação, abreviação,
+  apelido e marca (ex.: "breja" = cerveja, "coca" = Coca-Cola). Se a empresa mandou opções numeradas e o cliente escolheu, use a escolhida.
+- opcoes: quando o pedido serve para mais de um produto do cadastro e o cliente não disse qual (ex.: "cerveja" com várias
+  cervejas no cadastro, "café" com café solúvel e torrado), produto_id null e de 2 a 6 ids possíveis. Não escolha pelo cliente. Sem produto parecido no cadastro: o item entra mesmo assim, com produto_id null e opcoes [] (o cliente fica sabendo que não tem).
+- situacao: "confirmou" se a ÚLTIMA mensagem do cliente aceita o último resumo do pedido mandado pela empresa, sem pedir
+  mudança (ex.: "sim", "pode mandar", "confirmo"); "cancelou" se ele desiste do pedido; senão "pedindo".
+- Se a empresa avisou que um produto está sem estoque (ou só tem parte) e o cliente escolheu um dos oferecidos no lugar,
+  use o escolhido; se ele aceitou a quantidade que tem, use essa quantidade; se não quis mais, tire o item.
+- Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = 1).`;
+
+/**
+ * Nó "Registrar pedido": a IA lê a conversa (inclusive os resumos já mandados e as correções do cliente) e monta o
+ * pedido com os produtos do cadastro (ativos, do grupo de empresas). Na dúvida entre produtos, devolve as opções para
+ * o cliente escolher; sem produto no cadastro, o item fica em faltou
+ */
+export async function pedidoDaConversa(ctx: Contexto, cfg: ConfigChatbot, opcoes: OpcoesPedido = {}): Promise<PropostaPedido> {
+  const conversa = (await historico(ctx))
+    .map((c) => `${c.role === 'user' ? 'Cliente' : 'Empresa'}: ${(c.parts ?? []).map((p) => p.text ?? '').join('\n')}`)
+    .join('\n');
+  return pedidoDoTexto(conversa, ctx.empresaId, cfg, opcoes);
+}
+
+/** O mesmo, a partir do texto da conversa ("Cliente: ..." / "Empresa: ...") */
+export async function pedidoDoTexto(conversa: string, empresaId: string | number, cfg: ConfigChatbot, op: OpcoesPedido = {}): Promise<PropostaPedido> {
+  const res: PropostaPedido = { situacao: 'pedindo', itens: [], duvidas: [], faltou: [], semEstoque: [], sugestoes: [] };
+  if (!conversa) return res;
+  const escopo = `FROM ${PRODUTOS} t WHERE t.ativo = 1 AND ${DO_GRUPO('t.grupo_empresas_id')}`;
+  const [[{ qtd }]] = await pool.query<any>(`SELECT COUNT(*) AS qtd ${escopo}`, [empresaId]);
+  let catalogo: ProdutoCadastro[];
+  if (Number(qtd) <= CATALOGO_INTEIRO) {
+    [catalogo] = await pool.query<any[]>(`SELECT t.id, t.nome, t.codigo_sku, t.preco_tabela, t.servico ${escopo} ORDER BY t.nome`, [empresaId]);
+  } else {
+    // Catálogo grande: a IA lista o que o cliente citou e a busca traz os candidatos de cada um
+    const r = await conversarIa(
+      cfg,
+      'Você lê uma conversa de WhatsApp entre um cliente e uma empresa e lista os produtos que o cliente pediu ou citou para comprar, como ele escreveu (com marca, medida, cor, sabor...). Responda só com JSON: {"produtos":["...", ...]}',
+      [{ de: 'pessoa', texto: conversa }],
+      [],
+    );
+    const citados = jsonDaIa(r.texto).produtos;
+    const porId = new Map<number, ProdutoCadastro>();
+    for (const nome of (Array.isArray(citados) ? citados : []).slice(0, 30)) {
+      for (const p of await candidatosDoCadastro(String(nome ?? '').slice(0, 200), escopo, empresaId)) porId.set(Number(p.id), p);
+    }
+    const extras = (op.extras ?? []).filter((id) => !porId.has(id)).slice(0, 60);
+    if (extras.length) {
+      const [rows] = await pool.query<any[]>(`SELECT t.id, t.nome, t.codigo_sku, t.preco_tabela, t.servico ${escopo} AND t.id IN (?)`, [empresaId, extras]);
+      for (const p of rows) porId.set(Number(p.id), p);
+    }
+    catalogo = [...porId.values()];
+  }
+
+  const r = await conversarIa(
+    cfg,
+    PROMPT_PEDIDO,
+    [
+      {
+        de: 'pessoa',
+        texto: `Cadastro de produtos ([id] nome — preço):
+${catalogo.map((c) => `[${c.id}] ${c.nome}${c.codigo_sku ? ` (cód. ${c.codigo_sku})` : ''} — R$ ${(Number(c.preco_tabela) || 0).toFixed(2)}`).join('\n') || '(nenhum produto parecido)'}
+
+Conversa:
+${conversa}`,
+      },
+    ],
+    [],
+    8192,
+  );
+  const j = jsonDaIa(r.texto);
+  const doCadastro = new Map(catalogo.map((c) => [Number(c.id), c]));
+  const item = (c: ProdutoCadastro, quantidade: number): ItemPedido => ({ produto_id: Number(c.id), nome: c.nome, quantidade, preco_unitario: Number(c.preco_tabela) || 0 });
+  if (j.situacao === 'confirmou' || j.situacao === 'cancelou') res.situacao = j.situacao;
+  for (const i of (Array.isArray(j.itens) ? j.itens : []).slice(0, 30)) {
+    const texto = String(i?.texto ?? '').trim().slice(0, 200);
+    const quantidade = Math.round(Number(i?.quantidade) * 1000) / 1000;
+    if (!(quantidade > 0)) continue;
+    const certo = doCadastro.get(Number(i?.produto_id));
+    const opcoes = (Array.isArray(i?.opcoes) ? i.opcoes : [])
+      .map((id: unknown) => doCadastro.get(Number(id)))
+      .filter((c: ProdutoCadastro | undefined): c is ProdutoCadastro => Boolean(c))
+      .slice(0, 6);
+    const escolhido = certo ?? (opcoes.length === 1 ? opcoes[0] : null);
+    if (escolhido) {
+      // O mesmo produto duas vezes: vale o último (a IA já junta; aqui é só garantia)
+      res.itens = [...res.itens.filter((x) => x.produto_id !== Number(escolhido.id)), item(escolhido, quantidade)];
+    } else if (opcoes.length) res.duvidas.push({ texto: texto || opcoes[0].nome, quantidade, opcoes: opcoes.map((o: ProdutoCadastro) => item(o, quantidade)) });
+    else if (texto) res.faltou.push(texto);
+  }
+
+  // Sem saldo para a quantidade pedida: sai dos itens e o cliente escolhe um similar (ou a quantidade que tem)
+  if (op.estoque !== false && res.itens.length) {
+    const saldo = await disponivelNaFilial(res.itens.map((i) => i.produto_id), empresaId);
+    const faltando = res.itens.filter((i) => !temSaldo(doCadastro.get(i.produto_id) ?? {}, saldo.get(i.produto_id), i.quantidade));
+    if (faltando.length) {
+      const similares = await relacionados('similares', faltando.map((i) => i.produto_id), empresaId);
+      res.itens = res.itens.filter((i) => !faltando.includes(i));
+      for (const i of faltando) {
+        const opcoes = (similares.get(i.produto_id) ?? []).filter((o) => !res.itens.some((x) => x.produto_id === o.produto_id)).slice(0, 4);
+        res.semEstoque.push({ item: i, disponivel: Math.max(0, saldo.get(i.produto_id) ?? 0), opcoes: opcoes.map((o) => ({ ...o, quantidade: i.quantidade })) });
+      }
+    }
+  }
+
+  // Sugestões (venda casada) dos itens, na ordem dos itens e do cadastro; só no resumo sem pendência, sem repetir
+  if (op.sugestoes !== false && res.itens.length && !res.duvidas.length && !res.semEstoque.length) {
+    const sug = await relacionados('sugestoes', res.itens.map((i) => i.produto_id), empresaId);
+    const vistos = new Set([...res.itens.map((i) => i.produto_id), ...(op.jaOferecidos ?? [])]);
+    for (const i of res.itens) {
+      for (const s of sug.get(i.produto_id) ?? []) {
+        if (res.sugestoes.length >= 3 || vistos.has(s.produto_id)) continue;
+        vistos.add(s.produto_id);
+        res.sugestoes.push(s);
+      }
+    }
+  }
+  return res;
+}
+
+/** Busca no catálogo grande: produtos com mais começos de palavra do item no nome (pega plural e boa parte dos erros), ou o código exato */
+async function candidatosDoCadastro(nome: string, escopo: string, empresaId: string | number): Promise<ProdutoCadastro[]> {
+  const pedacos = [
+    ...new Set(
+      nome
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((w) => w.length >= 2)
+        .map((w) => (w.length >= 5 ? w.slice(0, 4) : w)),
+    ),
+  ].slice(0, 8);
+  if (!pedacos.length) return [];
+  const [rows] = await pool.query<any[]>(
+    `SELECT * FROM (SELECT t.id, t.nome, t.codigo_sku, t.preco_tabela, t.servico, (${pedacos.map(() => '(t.nome LIKE ?)').join(' + ')}) + 5 * (t.codigo_sku = ?) AS pontos ${escopo}) x
+      WHERE x.pontos > 0 ORDER BY x.pontos DESC, LENGTH(x.nome) LIMIT 12`,
+    [...pedacos.map((w) => `%${w}%`), nome, empresaId],
+  );
+  return rows;
 }
 
 async function transferirParaHumano(ctx: Contexto, a: Record<string, unknown>) {
@@ -910,6 +1145,7 @@ export async function conversarIa(
   system: string,
   falas: FalaIa[],
   ferramentas: FerramentaIa[],
+  maxSaida = 2048,
 ): Promise<{ texto: string; chamada: { nome: string; args: Record<string, unknown> } | null }> {
   const contents: Content[] = [];
   for (const f of falas) {
@@ -939,7 +1175,7 @@ export async function conversarIa(
     config: {
       systemInstruction: system,
       tools: [{ functionDeclarations: ferramentas.map((t) => ({ name: t.nome, description: t.descricao, parametersJsonSchema: esquema(t) })) }],
-      maxOutputTokens: 2048,
+      maxOutputTokens: maxSaida,
     },
   });
   const c = r.functionCalls?.[0];

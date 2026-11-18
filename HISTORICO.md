@@ -2,6 +2,12 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.202 — 2026-11-18
+
+- Automação: botão "IA" (Configurações › Automação). Você escreve o que mudar, a IA lê a automação do quadro e devolve ela refeita, conferida pela mesma validação do Salvar (nada muda no WhatsApp até Salvar automação).
+- Automação: nó novo "Registrar pedido". A IA lê a conversa, acha no cadastro de produtos o que o cliente pediu (aceita plural, erro de digitação e apelido; pergunta quando o item serve para mais de um produto), manda o resumo com o total e só grava o pedido depois do "sim". Saídas: pedido gravado, cliente desistiu e não achou produtos; variáveis `{{pedido_numero}}`, `{{pedido_total}}`, `{{pedido_itens}}` e `{{pedido_faltou}}`. Cliente sem cadastro entra como lead e vira cliente, com negócio e atividade para o vendedor.
+- Registrar pedido: confere o saldo na filial (mesma regra do erp-estoque) e, faltando estoque, oferece os similares do cadastro (`cad_produtos_similares`); no resumo final oferece as sugestões do cadastro (`cad_produtos_sugestoes`), só as que têm saldo e sem repetir. As duas coisas se ligam e desligam no nó.
+
 ## 0.0.201 — 2026-11-17
 
 - Primeira versão do CRM dentro do ERP (portado do bm-crm 0.0.200): roda no banco do ERP (bmerp_000000), com as tabelas próprias prefixadas `crm_` (migration e reversão em `extras/2026-11-17_crm_tabelas*.sql`).

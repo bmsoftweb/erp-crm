@@ -273,6 +273,25 @@ export async function aprovarProposta(emp: string, id: string, como = 'aprovada 
   return gerado;
 }
 
+/** Pedido novo fora da tela (nó "Registrar pedido" da Automação), com os itens já escolhidos e o preço de tabela */
+export async function criarPedido(
+  emp: string,
+  p: { pessoa_id: number; negocio_id: number | null; status: string; observacoes: string; itens: { produto_id: number; quantidade: number; preco_unitario: number }[] },
+): Promise<{ id: number; numero: number; total: number }> {
+  const tot = calcularTotais(p.itens.map((i) => ({ ...i, produto_id: String(i.produto_id), desconto: 0 })), 0);
+  return transacao(async (conn) => {
+    const numero = await proximoNumero(conn, 'crm_pedidos', 'numero_pedido', emp);
+    const [novo] = await conn.query(
+      `INSERT INTO crm_pedidos (negocio_id, pessoa_id, empresa_id, status, valor_subtotal, valor_desconto, valor_total, observacoes, numero_pedido, data_emissao)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [p.negocio_id, p.pessoa_id, emp, p.status, tot.subtotal, tot.desconto, tot.total, p.observacoes || null, numero],
+    );
+    const id = Number(novo.insertId);
+    await gravarItens(conn, 'pedido', id, tot.linhas);
+    return { id, numero, total: tot.total };
+  });
+}
+
 export function createCrmRouter() {
   const router = Router();
 

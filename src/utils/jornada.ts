@@ -14,12 +14,13 @@ import {
   MessageSquare,
   Network,
   Play,
+  ShoppingCart,
   Target,
   UserPlus,
 } from 'lucide-react';
 
 /** Jornada de atendimento: o mesmo formato de server/jornada.ts */
-export type TipoNo = 'inicio' | 'mensagem' | 'imagem' | 'menu' | 'pergunta' | 'condicao' | 'case' | 'esperar' | 'api' | 'ia' | 'iaex' | 'lead' | 'prospeccao' | 'tarefa' | 'departamento' | 'fim';
+export type TipoNo = 'inicio' | 'mensagem' | 'imagem' | 'menu' | 'pergunta' | 'condicao' | 'case' | 'esperar' | 'api' | 'ia' | 'iaex' | 'lead' | 'prospeccao' | 'tarefa' | 'pedido' | 'departamento' | 'fim';
 
 export interface NoJornada {
   id: string;
@@ -71,6 +72,12 @@ export const TIPOS_NO: Record<TipoNo, { nome: string; icone: LucideIcon; cor: st
     cor: 'teal',
     ajuda: 'Cria uma tarefa (para o departamento escolhido) com as variáveis coletadas, para alguém retornar o contato. Segue sem esperar.',
   },
+  pedido: {
+    nome: 'Registrar pedido',
+    icone: ShoppingCart,
+    cor: 'teal',
+    ajuda: 'A IA lê a conversa, acha no cadastro os produtos e as quantidades que o cliente pediu , manda o resumo e grava o pedido quando o cliente confirma. Espera a resposta.',
+  },
   departamento: { nome: 'Departamento', icone: Network, cor: 'sky', ajuda: 'Passa para humano do departamento (atividade + aviso no WhatsApp).' },
   fim: { nome: 'Fim', icone: Flag, cor: 'rose', ajuda: 'Encerra a automação (com uma mensagem opcional).' },
 };
@@ -80,7 +87,7 @@ export const GRUPOS_NO: { titulo: string; tipos: TipoNo[] }[] = [
   { titulo: 'Conversa', tipos: ['mensagem', 'imagem', 'menu', 'pergunta'] },
   { titulo: 'Lógica', tipos: ['condicao', 'case', 'esperar'] },
   { titulo: 'Integrações', tipos: ['api', 'ia', 'iaex'] },
-  { titulo: 'CRM', tipos: ['lead', 'prospeccao', 'tarefa', 'departamento'] },
+  { titulo: 'CRM', tipos: ['lead', 'prospeccao', 'tarefa', 'pedido', 'departamento'] },
   { titulo: 'Encerrar', tipos: ['fim'] },
 ];
 
@@ -110,6 +117,13 @@ export const OPERADORES = [
   { value: 'regex', label: 'combina com a regex' },
 ];
 
+/** Status com que o nó "Registrar pedido" grava o pedido */
+export const STATUS_PEDIDO = [
+  { value: 'aguardando_aprovacao', label: 'Aguardando aprovação' },
+  { value: 'rascunho', label: 'Rascunho' },
+  { value: 'aprovado', label: 'Aprovado' },
+];
+
 /** Saídas do nó, com o rótulo que aparece embaixo dele (mesma regra de server/jornada.ts) */
 export function saidasDoNo(no: Pick<NoJornada, 'tipo' | 'dados'>): { id: string; rotulo: string }[] {
   const d = no.dados;
@@ -127,6 +141,12 @@ export function saidasDoNo(no: Pick<NoJornada, 'tipo' | 'dados'>): { id: string;
       return [
         { id: 'sucesso', rotulo: 'sucesso' },
         { id: 'erro', rotulo: 'erro' },
+      ];
+    case 'pedido':
+      return [
+        { id: 'sucesso', rotulo: 'pedido gravado' },
+        { id: 'cancelado', rotulo: 'cliente desistiu' },
+        { id: 'erro', rotulo: 'não achou produtos' },
       ];
     case 'ia':
       return [{ id: 'humano', rotulo: 'passou p/ humano' }];
@@ -175,6 +195,8 @@ export function dadosPadrao(tipo: TipoNo): Record<string, any> {
       return { funil_id: null, etapa_id: null, negocio: 'Prospecção', nome: '{{nome}}', empresa: '{{empresa}}', email: '{{email}}', observacao: '' };
     case 'tarefa':
       return { departamento_id: null, assunto: 'Retornar contato: {{nome}} ({{empresa}})', observacao: '{{nome}} da empresa {{empresa}} pediu contato fora do horário de atendimento.' };
+    case 'pedido':
+      return { status: 'aguardando_aprovacao', observacao: '', estoque: true, sugestoes: true };
     case 'departamento':
       return { departamento_id: null, texto: 'Certo! Vou te encaminhar para a equipe. Um atendente já vai continuar a conversa por aqui.' };
     case 'fim':
@@ -215,6 +237,8 @@ export function resumoNo(no: NoJornada, departamentos: { value: string; label: s
       return 'Pessoa + negócio + atividade';
     case 'tarefa':
       return d.assunto || '';
+    case 'pedido':
+      return `Pedido ${STATUS_PEDIDO.find((s) => s.value === d.status)?.label.toLowerCase() ?? ''} com os produtos da conversa`;
     case 'prospeccao':
       return d.negocio ? `Negócio: ${d.negocio}` : 'Negócio no funil';
     case 'ia':
@@ -233,7 +257,7 @@ export function avisosJornada(j: Pick<Jornada, 'nos' | 'ligacoes'>): string[] {
   for (const n of j.nos) {
     if (n.tipo !== 'inicio' && !j.ligacoes.some((l) => l.para === n.id)) avisos.push(`"${nome(n)}" não recebe nenhuma ligação (nunca é alcançado).`);
     for (const s of saidasDoNo(n)) {
-      if (['invalida', 'nenhum', 'nenhuma', 'erro', 'humano'].includes(s.id)) continue;
+      if (['invalida', 'nenhum', 'nenhuma', 'erro', 'humano', 'cancelado'].includes(s.id)) continue;
       if (!j.ligacoes.some((l) => l.de === n.id && l.saida === s.id)) avisos.push(`"${nome(n)}": a saída ${s.rotulo ? `"${s.rotulo}"` : ''} não está ligada (encerra a automação).`);
     }
   }
@@ -247,6 +271,7 @@ export function variaveisDisponiveis(nos: NoJornada[]): string[] {
     if (n.tipo === 'pergunta' && n.dados.variavel) v.add(n.dados.variavel);
     if (n.tipo === 'api') for (const e of n.dados.extrair ?? []) if (e.variavel) v.add(e.variavel);
     if (n.tipo === 'iaex') v.add('ia_opcao');
+    if (n.tipo === 'pedido') for (const p of ['pedido_numero', 'pedido_total', 'pedido_itens', 'pedido_faltou']) v.add(p);
     if (n.tipo === 'condicao' && n.dados.tipo === 'horario') v.add('horario');
   }
   return [...v];
