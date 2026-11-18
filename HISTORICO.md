@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.209 — 2026-11-18
+
+- WhatsApp: mensagem recebida de conversa individual que o CRM descarta (sem número de telefone no endereçamento LID, ou sem conteúdo porque a Evolution não decifrou) agora fica no log da Vercel com o motivo, para achar por que as mensagens não entram.
+
 ## 0.0.208 — 2026-11-18
 
 - Segurança (isolamento entre empresas): o SQL da seleção de campanha e das Consultas com IA é recusado se sobrar qualquer tabela de verdade ou nome de banco depois da troca pelas tabelas da empresa (vírgula, parênteses, outro banco); `extractvalue` e `updatexml` bloqueados.

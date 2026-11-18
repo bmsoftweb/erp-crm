@@ -790,9 +790,13 @@ async function gravarMensagem(empresaId: number, d: any): Promise<MensagemNova |
   const key = d?.key ?? {};
   // Com o endereçamento novo (LID), o número vem no remoteJidAlt/senderPn
   const jid = [key.remoteJid, key.remoteJidAlt, key.senderPn].find((j) => typeof j === 'string' && j.endsWith('@s.whatsapp.net'));
-  if (!jid || !key.id) return null; // grupo, status, canal
+  // Recebida de conversa individual descartada: fica no log o porquê (sem o conteúdo)
+  const descartada = (motivo: string) =>
+    !key.fromMe && /@(lid|s\.whatsapp\.net)$/.test(String(key.remoteJid)) &&
+    console.warn(`WhatsApp: recebida ${key.id} descartada (${motivo}): ${JSON.stringify({ ...key, id: undefined })} stub=${d?.messageStubType ?? '-'}`);
+  if (!jid || !key.id) return descartada('sem número de telefone'), null; // grupo, status, canal
   const c = conteudoMensagem(d.message);
-  if (!c) return null;
+  if (!c) return d?.message ? null : (descartada('sem conteúdo'), null); // reação, apagar, edição: sem log
   const telefone = digitosDoJid(jid);
   const recebida = !key.fromMe;
   const dono = await donoDoTelefone(empresaId, telefone);
