@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.210 — 2026-11-18
+
+- Automação: o menu entende o cliente que já pede o produto em vez de digitar o número ("2 agua" vai para "Comprar um produto"; número junto do produto é quantidade).
+- Automação: com a saída "inválida" voltando para o próprio menu, ele é repetido com o aviso de que não entendeu.
+
 ## 0.0.209 — 2026-11-18
 
 - WhatsApp: mensagem recebida de conversa individual que o CRM descarta (sem número de telefone no endereçamento LID, ou sem conteúdo porque a Evolution não decifrou) agora fica no log da Vercel com o motivo, para achar por que as mensagens não entram.

@@ -714,7 +714,8 @@ class Execucao {
         if (!escolha && entrada && temChave(this.bot)) escolha = await escolhaPelaIa(this.bot, entrada, opcoes).catch(async (e) => (await this.falha(no, e.message), null));
         if (escolha) return this.destino(no, (escolha as any).id) ?? 'fim';
         const invalida = this.destino(no, 'invalida');
-        if (invalida) return invalida;
+        // "Inválida" voltando para o próprio menu: repete com o aviso de que não entendeu
+        if (invalida && invalida.id !== no.id) return invalida;
         await this.menu(no, `${no.dados.invalida || 'Desculpe, não entendi. Responda com o número de uma das opções:'}\n`);
         return null;
       }

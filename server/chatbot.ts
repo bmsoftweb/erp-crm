@@ -923,7 +923,7 @@ export function escolhaDoTexto(texto: string, opcoes: OpcaoMenu[]): OpcaoMenu | 
 
 /** Escolha escrita de outro jeito ("quero falar com o financeiro, boleto"): a IA diz qual opção, ou nenhuma */
 export async function escolhaPelaIa(cfg: ConfigChatbot, texto: string, opcoes: OpcaoMenu[]): Promise<OpcaoMenu | null> {
-  const pergunta = `Opções do menu de atendimento:\n${listaMenu(opcoes)}\n\nMensagem do cliente: "${texto.slice(0, 500)}"\n\nResponda só com o número da opção que o cliente escolheu, ou 0 se a mensagem não indica nenhuma.`;
+  const pergunta = `Opções do menu de atendimento:\n${listaMenu(opcoes)}\n\nMensagem do cliente: "${texto.slice(0, 500)}"\n\nO cliente pode não dizer o número e já pedir direto o que quer: escolha a opção que atende o pedido (ex.: pedir um produto, com ou sem quantidade, é a opção de comprar). Número junto de um produto ("2 agua") é quantidade, não número de opção.\nResponda só com o número da opção que o cliente escolheu, ou 0 se a mensagem não indica nenhuma.`;
   const resposta =
     formatoClaude(cfg)
       ? textoClaude(await perguntarClaude(cfg, { max_tokens: 2048, messages: [{ role: 'user', content: pergunta }] }))
