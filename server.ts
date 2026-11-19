@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createApp } from './server/app.js';
-import { iniciarEnvioWhatsApp } from './server/whatsapp.js';
+import { iniciarEnvioWhatsApp, vigiarWhatsApp } from './server/whatsapp.js';
 import { iniciarRotinaContratos } from './server/contratos.js';
 import { iniciarAutomaticas } from './server/automaticas.js';
 import { iniciarJornadas } from './server/jornada.js';
@@ -43,6 +43,8 @@ async function startServer() {
     iniciarBotAtividades();
     iniciarRotinaContratos();
     iniciarAgendaGoogle();
+    // Vigia da Evolution a cada 10 min (na Vercel: cron /api/cron/whatsapp)
+    setInterval(() => vigiarWhatsApp().catch((err) => console.error('Vigia do WhatsApp:', err.message)), 10 * 60_000);
   });
 }
 

@@ -15,7 +15,7 @@ import { createCampanhasRouter } from './campanhas.js';
 import { createConversasRouter } from './conversas.js';
 import { createJornadaRouter, retomarJornadas } from './jornada.js';
 import { createContratosRouter, createWebhookD4SignRouter, rotinaContratos } from './contratos.js';
-import { enviarPendentes, receberAvisoEvolution } from './whatsapp.js';
+import { enviarPendentes, receberAvisoEvolution, vigiarWhatsApp } from './whatsapp.js';
 import { enviarAutomaticas } from './automaticas.js';
 import { responderComBot } from './chatbot.js';
 import { verificarInatividade } from './inatividade.js';
@@ -303,11 +303,13 @@ export function createApp() {
       // e cada minuto da função conta no consumo da Vercel
       const decimo = new Date().getMinutes() % 10 === 0;
       // Bot das atividades também em paralelo: cada contato espera a IA
-      const [inatividade, atividadesBot, agendaGoogle, resto] = await Promise.all([
+      const [inatividade, atividadesBot, agendaGoogle, vigiaWhatsApp, resto] = await Promise.all([
         verificarInatividade(),
         rodarBotAtividades(45_000),
         // Google Agenda da empresa, nos dois sentidos (server/agendaGoogle.ts)
         decimo ? sincronizarAgendas(25_000).catch((e) => `falhou: ${e.message}`) : 'a cada 10 min',
+        // Vigia da Evolution: conexão, webhook e tráfego de cada número (server/whatsapp.ts)
+        decimo ? vigiarWhatsApp().catch((e) => `falhou: ${e.message}`) : 'a cada 10 min',
         (async () => ({
           campanhas: await enviarPendentes(50, 25_000),
           emails: await enviarEmailsCampanha(50, 20_000),
@@ -315,7 +317,7 @@ export function createApp() {
           jornadas: await retomarJornadas(20_000),
         }))(),
       ]);
-      return { ...resto, inatividade, atividadesBot, agendaGoogle };
+      return { ...resto, inatividade, atividadesBot, agendaGoogle, vigiaWhatsApp };
     }),
   );
   // De hora em hora: a rotina dos contratos

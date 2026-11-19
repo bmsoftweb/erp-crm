@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.217 — 2026-11-18
+
+- WhatsApp: vigia da Evolution a cada 10 min. Para cada número Evolution confere se está conectado de verdade (reinicia sozinha quando a conexão caiu), se o webhook do recebimento está cadastrado (religa sozinha quando sumiu ou foi desligado; ligado a outro endereço, só avisa) e, no número padrão, se ele parou de receber: enviadas sem nenhuma confirmação de entrega, ou expediente (seg a sex, 10h às 18h) sem mensagem recebida em empresa movimentada. O que não se resolve sozinho vira notificação no sino para os administradores (mesmo aviso no máximo a cada 6 h), com o passo a passo.
+
 ## 0.0.216 — 2026-11-18
 
 - WhatsApp: depois que a equipe encerra o atendimento, a próxima mensagem do cliente vai para o bot (antes voltava para o atendente que escreveu por último).
