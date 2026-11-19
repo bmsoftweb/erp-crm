@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.219 — 2026-11-19
+
+- Automação (Registrar pedido): produto escolhido sem dizer quantos (ex.: só o número da opção) faz o bot perguntar a quantidade antes do resumo; a IA não assume mais 1.
+
 ## 0.0.218 — 2026-11-19
 
 - WhatsApp: a vigia da Evolution não confere mais os números sem apikey cadastrada nem os que a Evolution recusa (instância que não existe no servidor), para não encher o sino com aviso de número fora de uso.

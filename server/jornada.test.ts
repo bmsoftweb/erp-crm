@@ -47,6 +47,13 @@ assert.match(resumoPedido({ itens: [], duvidas: [], faltou: [], semEstoque: [tor
 const comSugestao = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semEstoque: [], sugestoes: [{ ...agua, produto_id: 66, nome: 'OLEO 900ML', quantidade: 1, preco_unitario: 8.5 }] });
 assert.match(comSugestao, /Aproveite também:\n1\) OLEO 900ML — R\$ 8,50/);
 assert.match(comSugestao, /pode ser dos sugeridos/);
+// Produto escolhido sem dizer quantos: a dúvida não mostra "(1)" e o resumo termina perguntando a quantidade
+const puroMalte = { produto_id: 52, nome: 'CERVEJA PURO MALTE LATA 473ML', quantidade: 1, preco_unitario: 6 };
+assert.match(resumoPedido({ itens: [], duvidas: [{ texto: 'cerveja', quantidade: 1, semQtd: true, opcoes: [cerveja, puroMalte] }], faltou: [] }), /^Sobre "cerveja", qual destes\?/);
+assert.strictEqual(pedidoPendente({ duvidas: [], semQuantidade: [puroMalte] }), true);
+assert.strictEqual(resumoPedido({ itens: [], duvidas: [], faltou: [], semQuantidade: [puroMalte] }), 'Qual a quantidade de CERVEJA PURO MALTE LATA 473ML (R$ 6,00 cada)?');
+const comQtd = resumoPedido({ itens: [cerveja], duvidas: [], faltou: [], semQuantidade: [puroMalte, { ...puroMalte, produto_id: 53, nome: 'COCA LATA' }] });
+assert.match(comQtd, /Total: R\$ 30,00\n\nQual a quantidade de cada um\?\n- CERVEJA PURO MALTE LATA 473ML — R\$ 6,00\n- COCA LATA — R\$ 6,00$/);
 // Pedido por foto: o achado primeiro, os parecidos depois, e pergunta se é esse
 const heineken = { produto_id: 70, nome: 'HEINEKEN 600ML', quantidade: 1, preco_unitario: 12.9 };
 const porFoto = resumoPedido({ itens: [], duvidas: [{ texto: 'cerveja da foto', quantidade: 1, foto: true, opcoes: [heineken, { ...heineken, produto_id: 71, nome: 'AMSTEL 600ML', preco_unitario: 9.9 }] }], faltou: [] });

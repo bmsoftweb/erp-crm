@@ -635,7 +635,9 @@ export interface PropostaPedido {
   situacao: 'pedindo' | 'confirmou' | 'cancelou';
   itens: ItemPedido[];
   /** Itens que servem para mais de um produto: o cliente escolhe. foto: pedido por foto, o 1º é o que a IA achou e o cliente confirma */
-  duvidas: { texto: string; quantidade: number; opcoes: ItemPedido[]; foto?: boolean }[];
+  duvidas: { texto: string; quantidade: number; opcoes: ItemPedido[]; foto?: boolean; semQtd?: boolean }[];
+  /** Produto já escolhido sem a quantidade dita: o cliente diz quantos (fora de itens) */
+  semQuantidade: ItemPedido[];
   /** Pedidos sem produto no cadastro */
   faltou: string[];
   /** Itens sem saldo para a quantidade pedida (fora de itens), com os similares do cadastro que têm saldo */
@@ -709,9 +711,12 @@ async function relacionados(tipo: 'similares' | 'sugestoes', ids: number[], empr
 }
 
 const PROMPT_PEDIDO = `Você monta o pedido de um cliente a partir de uma conversa de WhatsApp com a empresa, usando só os produtos do cadastro.
-Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número>,"produto_id":<id ou null>,"opcoes":[<ids>],"foto":<true|false>}],"fotos":[<ids>]}
+Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"texto":"<o produto como o cliente escreveu, sem a quantidade>","quantidade":<número ou null>,"produto_id":<id ou null>,"opcoes":[<ids>],"foto":<true|false>}],"fotos":[<ids>]}
 - itens: tudo o que o cliente quer comprar, já com as correções que ele fez na conversa (quantidade nova, item trocado ou
-  retirado). Quantidade não dita = 1. Produto de que ele desistiu ou que só perguntou o preço não entra. Um item por produto.
+  retirado). Produto de que ele desistiu ou que só perguntou o preço não entra. Um item por produto.
+- quantidade: a que o cliente disse para aquele produto ("duas", "uma coca", "10 dessa", "1 cx" = número), mesmo que em
+  outra mensagem; se a empresa perguntou a quantidade, a resposta dele. Não disse quantos (ex.: "quero cerveja", ou só
+  respondeu o número de uma opção): null. Não invente 1.
 - produto_id: o produto do cadastro que é com certeza o que o cliente pediu. Aceite plural, erro de digitação, abreviação,
   apelido e marca (ex.: "breja" = cerveja, "coca" = Coca-Cola). Se a empresa mandou opções numeradas e o cliente escolheu, use a escolhida.
 - opcoes: quando o pedido serve para mais de um produto do cadastro e o cliente não disse qual (ex.: "cerveja" com várias
@@ -727,7 +732,7 @@ Responda só com JSON: {"situacao":"pedindo"|"confirmou"|"cancelou","itens":[{"t
   "cancelou" só se ele desiste do pedido; senão "pedindo".
 - Se a empresa avisou que um produto está sem estoque (ou só tem parte) e o cliente escolheu um dos oferecidos no lugar,
   use o escolhido; se ele aceitou a quantidade que tem, use essa quantidade; se não quis mais, tire o item.
-- Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = 1).
+- Se o cliente pediu um dos produtos sugeridos pela empresa ("Aproveite também"), inclua com a quantidade dele (não dita = null).
 - fotos: ids do cadastro dos produtos de que a ÚLTIMA mensagem do cliente pede foto ou imagem ("manda uma foto", "tem foto?").
   Sem produto dito, são os do pedido (ou os oferecidos por último). Pedir foto não é confirmar: situacao "pedindo". Nenhum pedido de foto: [].`;
 
@@ -745,7 +750,7 @@ export async function pedidoDaConversa(ctx: Contexto, cfg: ConfigChatbot, opcoes
 
 /** O mesmo, a partir do texto da conversa ("Cliente: ..." / "Empresa: ...") */
 export async function pedidoDoTexto(conversa: string, empresaId: string | number, cfg: ConfigChatbot, op: OpcoesPedido = {}): Promise<PropostaPedido> {
-  const res: PropostaPedido = { situacao: 'pedindo', itens: [], duvidas: [], faltou: [], semEstoque: [], sugestoes: [], fotos: [] };
+  const res: PropostaPedido = { situacao: 'pedindo', itens: [], duvidas: [], semQuantidade: [], faltou: [], semEstoque: [], sugestoes: [], fotos: [] };
   if (!conversa) return res;
   const escopo = `FROM ${PRODUTOS} t WHERE t.ativo = 1 AND ${DO_GRUPO('t.grupo_empresas_id')}`;
   const [[{ qtd }]] = await pool.query<any>(`SELECT COUNT(*) AS qtd ${escopo}`, [empresaId]);
@@ -815,7 +820,9 @@ ${conversa}`,
   }
   for (const i of (Array.isArray(j.itens) ? j.itens : []).slice(0, 30)) {
     const texto = String(i?.texto ?? '').trim().slice(0, 200);
-    const quantidade = Math.round(Number(i?.quantidade) * 1000) / 1000;
+    // Quantidade não dita (null): o produto vale por 1 até o cliente dizer quantos
+    const semQtd = i?.quantidade == null || i.quantidade === '';
+    const quantidade = semQtd ? 1 : Math.round(Number(i?.quantidade) * 1000) / 1000;
     if (!(quantidade > 0)) continue;
     const certo = doCadastro.get(Number(i?.produto_id));
     const opcoes = (Array.isArray(i?.opcoes) ? i.opcoes : [])
@@ -833,18 +840,26 @@ ${conversa}`,
     const escolhido = certo ?? (opcoes.length === 1 ? opcoes[0] : null);
     if (escolhido) {
       // O mesmo produto duas vezes: vale o último (a IA já junta; aqui é só garantia)
-      res.itens = [...res.itens.filter((x) => x.produto_id !== Number(escolhido.id)), item(escolhido, quantidade)];
-    } else if (opcoes.length) res.duvidas.push({ texto: texto || opcoes[0].nome, quantidade, opcoes: opcoes.map((o: ProdutoCadastro) => item(o, quantidade)) });
+      const fora = (l: ItemPedido[]) => l.filter((x) => x.produto_id !== Number(escolhido.id));
+      res.itens = fora(res.itens);
+      res.semQuantidade = fora(res.semQuantidade);
+      (semQtd ? res.semQuantidade : res.itens).push(item(escolhido, quantidade));
+    } else if (opcoes.length) {
+      res.duvidas.push({ texto: texto || opcoes[0].nome, quantidade, opcoes: opcoes.map((o: ProdutoCadastro) => item(o, quantidade)), ...(semQtd ? { semQtd: true } : {}) });
+    }
     else if (texto) res.faltou.push(texto);
   }
 
-  // Sem saldo para a quantidade pedida: sai dos itens e o cliente escolhe um similar (ou a quantidade que tem)
-  if (op.estoque !== false && res.itens.length) {
-    const saldo = await disponivelNaFilial(res.itens.map((i) => i.produto_id), empresaId);
-    const faltando = res.itens.filter((i) => !temSaldo(doCadastro.get(i.produto_id) ?? {}, saldo.get(i.produto_id), i.quantidade));
+  // Sem saldo para a quantidade pedida: sai dos itens e o cliente escolhe um similar (ou a quantidade que tem).
+  // Sem a quantidade dita, confere se tem ao menos 1: sem estoque, avisa em vez de perguntar quantos
+  const conferir = [...res.itens, ...res.semQuantidade];
+  if (op.estoque !== false && conferir.length) {
+    const saldo = await disponivelNaFilial(conferir.map((i) => i.produto_id), empresaId);
+    const faltando = conferir.filter((i) => !temSaldo(doCadastro.get(i.produto_id) ?? {}, saldo.get(i.produto_id), i.quantidade));
     if (faltando.length) {
       const similares = await relacionados('similares', faltando.map((i) => i.produto_id), empresaId);
       res.itens = res.itens.filter((i) => !faltando.includes(i));
+      res.semQuantidade = res.semQuantidade.filter((i) => !faltando.includes(i));
       for (const i of faltando) {
         const opcoes = (similares.get(i.produto_id) ?? []).filter((o) => !res.itens.some((x) => x.produto_id === o.produto_id)).slice(0, 4);
         res.semEstoque.push({ item: i, disponivel: Math.max(0, saldo.get(i.produto_id) ?? 0), opcoes: opcoes.map((o) => ({ ...o, quantidade: i.quantidade })) });
@@ -853,7 +868,7 @@ ${conversa}`,
   }
 
   // Sugestões (venda casada) dos itens, na ordem dos itens e do cadastro; só no resumo sem pendência, sem repetir
-  if (op.sugestoes !== false && res.itens.length && !res.duvidas.length && !res.semEstoque.length) {
+  if (op.sugestoes !== false && res.itens.length && !res.duvidas.length && !res.semEstoque.length && !res.semQuantidade.length) {
     const sug = await relacionados('sugestoes', res.itens.map((i) => i.produto_id), empresaId);
     const vistos = new Set([...res.itens.map((i) => i.produto_id), ...(op.jaOferecidos ?? [])]);
     for (const i of res.itens) {

@@ -66,20 +66,21 @@ const produtosDoResumo = (p: PropostaPedido): number[] => [
   ...new Set([
     ...p.itens,
     ...p.duvidas.flatMap((d) => d.opcoes),
+    ...(p.semQuantidade ?? []),
     ...(p.semEstoque ?? []).flatMap((f) => [f.item, ...f.opcoes]),
     ...(p.sugestoes ?? []),
   ].map((i) => i.produto_id)),
 ];
 
 /**
- * Falta o cliente escolher algo: um item que serve para mais de um produto, ou um sem estoque que tem troca
- * (similar ou a quantidade que há). Sem estoque e sem troca não espera escolha: só fica fora do pedido
+ * Falta o cliente escolher algo: um item que serve para mais de um produto, a quantidade de um produto, ou um sem
+ * estoque que tem troca (similar ou a quantidade que há). Sem estoque e sem troca não espera escolha: só fica fora do pedido
  */
-export const pedidoPendente = (p: Pick<PropostaPedido, 'duvidas'> & Partial<Pick<PropostaPedido, 'semEstoque'>>) =>
-  p.duvidas.length > 0 || (p.semEstoque ?? []).some((f) => f.opcoes.length > 0 || f.disponivel > 0);
+export const pedidoPendente = (p: Pick<PropostaPedido, 'duvidas'> & Partial<Pick<PropostaPedido, 'semEstoque' | 'semQuantidade'>>) =>
+  p.duvidas.length > 0 || (p.semQuantidade?.length ?? 0) > 0 || (p.semEstoque ?? []).some((f) => f.opcoes.length > 0 || f.disponivel > 0);
 
-/** Resumo do pedido para o cliente confirmar: itens e total, as dúvidas numeradas e o que não foi achado */
-export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'faltou'> & Partial<Pick<PropostaPedido, 'semEstoque' | 'sugestoes'>>): string {
+/** Resumo do pedido para o cliente confirmar: itens e total, as dúvidas numeradas, as quantidades a dizer e o que não foi achado */
+export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'faltou'> & Partial<Pick<PropostaPedido, 'semEstoque' | 'sugestoes' | 'semQuantidade'>>): string {
   const partes: string[] = [];
   const opcoesNumeradas = (lista: ItemPedido[]) => lista.map((o, i) => `${i + 1}) ${o.nome} — ${reais(o.preco_unitario)}`).join('\n');
   if (p.itens.length) {
@@ -91,7 +92,7 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
     partes.push(
       d.foto
         ? `Pela sua foto, parece ser:\n${opcoesNumeradas([achado])}${parecidos.length ? `\n\nTambém tenho parecido:\n${opcoesNumeradas(d.opcoes).split('\n').slice(1).join('\n')}` : ''}`
-        : `Sobre "${d.texto}" (${qtdTexto(d.quantidade)}), qual destes?\n${opcoesNumeradas(d.opcoes)}`,
+        : `Sobre "${d.texto}"${d.semQtd ? '' : ` (${qtdTexto(d.quantidade)})`}, qual destes?\n${opcoesNumeradas(d.opcoes)}`,
     );
   }
   for (const f of p.semEstoque ?? []) {
@@ -99,10 +100,16 @@ export function resumoPedido(p: Pick<PropostaPedido, 'itens' | 'duvidas' | 'falt
     partes.push(f.opcoes.length ? `${aviso} Posso trocar por:\n${opcoesNumeradas(f.opcoes)}` : f.disponivel > 0 ? aviso : `${aviso} Não tenho outro parecido agora.`);
   }
   if (p.faltou.length) partes.push(`Não encontrei: ${p.faltou.join(', ')}.`);
+  const semQtd = p.semQuantidade ?? [];
+  if (semQtd.length === 1) partes.push(`Qual a quantidade de ${semQtd[0].nome} (${reais(semQtd[0].preco_unitario)} cada)?`);
+  else if (semQtd.length) partes.push(`Qual a quantidade de cada um?\n${semQtd.map((i) => `- ${i.nome} — ${reais(i.preco_unitario)}`).join('\n')}`);
   const pendente = pedidoPendente(p);
-  // Só falta confirmar o produto da foto: pergunta direto se é ele
-  const soFoto = p.duvidas.length === 1 && p.duvidas[0].foto && !pedidoPendente({ duvidas: [], semEstoque: p.semEstoque });
+  const outrasPendencias = (d: PropostaPedido['duvidas'], q: ItemPedido[]) => pedidoPendente({ duvidas: d, semQuantidade: q, semEstoque: p.semEstoque });
+  // Só falta confirmar o produto da foto: pergunta direto se é ele. Só falta a quantidade: a pergunta dela já fecha o resumo
+  const soFoto = p.duvidas.length === 1 && p.duvidas[0].foto && !outrasPendencias([], semQtd);
+  const soQuantidade = semQtd.length > 0 && !outrasPendencias(p.duvidas, []);
   if (!pendente && p.sugestoes?.length) partes.push(`Aproveite também:\n${opcoesNumeradas(p.sugestoes)}`);
+  if (soQuantidade) return partes.join('\n\n');
   partes.push(
     soFoto
       ? p.duvidas[0].opcoes.length > 1
@@ -862,7 +869,7 @@ class Execucao {
       }
       await this.fotosDoPedido(p.fotos);
       // Nenhum produto na conversa ainda (ex.: só escolheu "Comprar" no menu): pergunta o que ele quer
-      if (!p.itens.length && !p.duvidas.length && !p.semEstoque.length) {
+      if (!p.itens.length && !p.duvidas.length && !p.semQuantidade.length && !p.semEstoque.length) {
         delete v._pedido;
         const naoAchou = p.faltou.length ? `Não encontrei: ${p.faltou.join(', ')}.\n\n` : '';
         await this.enviar(naoAchou + (preencher(no.dados.pergunta ?? '', await this.vars()).trim() || PERGUNTA_PEDIDO));
