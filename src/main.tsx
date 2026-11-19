@@ -5,6 +5,7 @@ import App from './App.tsx';
 import { AceiteProposta } from './components/AceiteProposta';
 import './index.css';
 import { instalarSelecaoAoFocar } from './utils/selecaoAoFocar';
+import { Dica } from './components/Dica';
 
 instalarSelecaoAoFocar();
 
@@ -21,5 +22,5 @@ if (!aceite) {
 }
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{aceite ? <AceiteProposta token={aceite[1]} /> : <App />}</StrictMode>,
+  <StrictMode>{aceite ? <AceiteProposta token={aceite[1]} /> : <App />}<Dica /></StrictMode>,
 );

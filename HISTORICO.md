@@ -2,6 +2,12 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.220 — 2026-11-19
+
+- Dicas (tooltips) no padrão BMsoft em todo o app: caixa escura com seta no lugar da dica nativa do navegador.
+- Clonar proposta cria a cópia sem negócio e leva o cliente.
+- Proposta nova sem negócio cria o negócio ao salvar (cliente e título).
+
 ## 0.0.219 — 2026-11-19
 
 - Automação (Registrar pedido): produto escolhido sem dizer quantos (ex.: só o número da opção) faz o bot perguntar a quantidade antes do resumo; a IA não assume mais 1.
