@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.215 — 2026-11-18
+
+- WhatsApp: cliente que responde depois de uma mensagem do atendente volta para ele; antes um erro de SQL deixava a mensagem sem resposta.
+
 ## 0.0.214 — 2026-11-18
 
 - Automação: foto mandada pelo cliente é lida pela IA (Gemini) e o que ela viu fica no texto da mensagem ("🔎 Na foto: ..."), junto da legenda, que agora também conta como mensagem.

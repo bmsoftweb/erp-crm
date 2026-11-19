@@ -1383,7 +1383,7 @@ async function respondeTecnico(nova: MensagemNova): Promise<number | null | fals
  */
 async function voltarAoTecnico(nova: MensagemNova, cfg: ConfigChatbot | null, usuarioId: number | null): Promise<void> {
   const [u] = usuarioId
-    ? await pool.query<any[]>('SELECT id, nome FROM ${USUARIOS_FILIAL} usuarios WHERE id = ? AND empresa_id = ? AND ativo = 1', [usuarioId, nova.empresaId])
+    ? await pool.query<any[]>(`SELECT id, nome FROM ${USUARIOS_FILIAL} usuarios WHERE id = ? AND empresa_id = ? AND ativo = 1`, [usuarioId, nova.empresaId])
     : [[]];
   if (!u[0]) return paraFila(nova, cfg, 'Cliente respondeu a uma mensagem do técnico: foi para a fila');
   if (await ehUsuario(nova.empresaId, nova.telefone)) return;
