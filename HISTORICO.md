@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.216 — 2026-11-18
+
+- WhatsApp: depois que a equipe encerra o atendimento, a próxima mensagem do cliente vai para o bot (antes voltava para o atendente que escreveu por último).
+
 ## 0.0.215 — 2026-11-18
 
 - WhatsApp: cliente que responde depois de uma mensagem do atendente volta para ele; antes um erro de SQL deixava a mensagem sem resposta.
