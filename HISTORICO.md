@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.221 — 2026-11-19
+
+- Clonar proposta cria a cópia no mesmo negócio da original (com o cliente dela).
+- O negócio da proposta pode ser trocado na edição enquanto ela tem uma versão só e não foi aceita nem fechada; o histórico de interações vai junto e os dois negócios são recalculados.
+
 ## 0.0.220 — 2026-11-19
 
 - Dicas (tooltips) no padrão BMsoft em todo o app: caixa escura com seta no lugar da dica nativa do navegador.
