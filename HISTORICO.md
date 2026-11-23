@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.222 — 2026-11-23
+
+- WhatsApp: clicar no círculo com a inicial da conversa abre o cadastro ligado ao número (pessoa, contato ou lead) para corrigir cliente ligado errado; ao salvar, a conversa é religada pelo número (sem dono, fica "não cadastrado").
+
 ## 0.0.221 — 2026-11-19
 
 - Clonar proposta cria a cópia no mesmo negócio da original (com o cliente dela).

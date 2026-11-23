@@ -12,6 +12,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { BotaoTemplates } from './BotaoTemplates';
 import { BotaoEmoji } from './BotaoEmoji';
 import { lerSessao } from '../utils/session';
+import { ClienteConversa } from './ClienteConversa';
 
 /** Quem pediu para abrir uma conversa (seq muda a cada clique) */
 export interface PedidoConversa {
@@ -213,6 +214,7 @@ export const ConversasView: React.FC<Props> = ({ refreshToken, onVisto, pedido, 
   const [conversa, setConversa] = useState<Awaited<ReturnType<typeof fetchConversa>> | null>(null);
   /** Cadastro rápido em Pessoas de um número sem cadastro */
   const [cadastrando, setCadastrando] = useState<{ telefone: string; nome: string } | null>(null);
+  const [editandoCliente, setEditandoCliente] = useState<{ telefone: string; recurso: 'pessoas' | 'pessoas_contatos' | 'leads'; id: number } | null>(null);
   const [texto, setTexto] = useState('');
   const [enviando, setEnviando] = useState(false);
   /** Arquivo escolhido para enviar (o texto vira a legenda) */
@@ -671,9 +673,25 @@ export const ConversasView: React.FC<Props> = ({ refreshToken, onVisto, pedido, 
                   }`}
                 >
                   {c.nome ? (
-                    <div className="w-9 h-9 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0 font-semibold text-xs">
+                    <span
+                      role="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // O número é do contato (o cadastro dele), senão da pessoa, senão do lead
+                        const alvo = c.contato_id
+                          ? { recurso: 'pessoas_contatos' as const, id: c.contato_id }
+                          : c.pessoa_id
+                            ? { recurso: 'pessoas' as const, id: c.pessoa_id }
+                            : c.lead_id
+                              ? { recurso: 'leads' as const, id: c.lead_id }
+                              : null;
+                        if (alvo) setEditandoCliente({ telefone: c.telefone, ...alvo });
+                      }}
+                      title="Abrir o cadastro ligado a este número (corrigir cliente errado)"
+                      className="w-9 h-9 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 hover:ring-2 hover:ring-blue-400 flex items-center justify-center shrink-0 font-semibold text-xs cursor-pointer"
+                    >
                       {(c.contato_nome || c.nome).charAt(0).toUpperCase()}
-                    </div>
+                    </span>
                   ) : (
                     <span
                       role="button"
@@ -1411,6 +1429,19 @@ export const ConversasView: React.FC<Props> = ({ refreshToken, onVisto, pedido, 
       )}
 
       {cadastrando && <CadastroRapido {...cadastrando} onFechar={() => setCadastrando(null)} onCadastrado={() => aoCadastrar(cadastrando.telefone)} />}
+      {editandoCliente && (
+        <ClienteConversa
+          {...editandoCliente}
+          onFechar={() => setEditandoCliente(null)}
+          onSalvo={async (r) => {
+            const telefone = editandoCliente.telefone;
+            setEditandoCliente(null);
+            onToast(r.pessoa_id || r.lead_id ? 'Cadastro salvo e conversa religada.' : 'Cadastro salvo: o número ficou sem cliente (clique no ícone para cadastrar o certo).');
+            if (telefone === aberta) await carregarConversa(telefone);
+            await carregarLista();
+          }}
+        />
+      )}
     </div>
   );
 };
