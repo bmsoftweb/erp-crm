@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Usuario } from '../types';
 import { CamposPersonalizados } from './CamposPersonalizados';
-import { ConfigEmail } from './ConfigEmail';
 import { ConfigWhatsApp } from './ConfigWhatsApp';
 import { ConfigAutomaticas } from './ConfigAutomaticas';
 import { ConfigChatbot } from './ConfigChatbot';
@@ -24,11 +23,6 @@ const ABAS = [
     id: 'pessoas',
     titulo: 'Campos Personalizados de Pessoas',
     descricao: 'Campos extras que aparecem no cadastro de pessoas, definidos por você.',
-  },
-  {
-    id: 'email',
-    titulo: 'E-mail (SMTP)',
-    descricao: 'Duas contas: a comercial (propostas, pedidos, contratos, campanhas) e a do suporte (pesquisa de satisfação e chamados).',
   },
   {
     id: 'whatsapp',
@@ -125,22 +119,6 @@ export const ConfiguracoesView: React.FC<Props> = ({ usuario, onToast }) => {
           )}
 
           {aba === 'pessoas' && <CamposPersonalizados somenteLeitura={somenteLeitura} onToast={onToast} />}
-          {aba === 'email' && (
-            <div className="flex flex-col gap-8">
-              <section className="flex flex-col gap-3">
-                <h3 className="text-sm font-bold text-stone-800 dark:text-stone-100">E-mail comercial</h3>
-                <p className="text-xs text-stone-500 dark:text-stone-400 -mt-2">Propostas, pedidos, contratos, campanhas e o Bot das atividades.</p>
-                <ConfigEmail chave="smtp" somenteLeitura={somenteLeitura} onToast={onToast} />
-              </section>
-              <section className="flex flex-col gap-3 pt-6 border-t border-stone-200 dark:border-stone-800">
-                <h3 className="text-sm font-bold text-stone-800 dark:text-stone-100">E-mail do suporte</h3>
-                <p className="text-xs text-stone-500 dark:text-stone-400 -mt-2">
-                  Pesquisa de satisfação (envio e leitura das respostas) e o Bot das atividades de chamados. Em branco: usa o e-mail comercial.
-                </p>
-                <ConfigEmail chave="smtp_suporte" somenteLeitura={somenteLeitura} onToast={onToast} />
-              </section>
-            </div>
-          )}
           {aba === 'whatsapp' && (
             <div className="flex flex-col gap-8">
               <ConfigWhatsApp somenteLeitura={somenteLeitura} onToast={onToast} />

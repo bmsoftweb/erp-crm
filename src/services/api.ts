@@ -492,10 +492,6 @@ export const enviarDocumento = (
 ): Promise<{ status: string; statusAlterado: boolean; tarefaRetorno: boolean }> =>
   enviar('POST', `/api/crm/${tipo}/${encodeURIComponent(String(id))}/enviar`, dados);
 
-/** Conecta e autentica no SMTP gravado em Configurações › E-mail, sem enviar nada */
-/** Testa a conta de e-mail gravada: smtp = comercial, smtp_suporte = suporte */
-export const testarSmtp = (chave: 'smtp' | 'smtp_suporte' = 'smtp'): Promise<{ success: boolean }> => enviar('POST', `/api/config/email/${chave}/testar`);
-
 /** Consulta no provedor se o número do WhatsApp gravado em Configurações está conectado */
 /** Conta do WhatsApp: a padrão ou a das campanhas (Configurações › WhatsApp) */
 export type ContaWhats = 'provedor' | 'campanhas';

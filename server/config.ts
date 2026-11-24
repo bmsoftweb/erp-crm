@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { pool } from './db.js';
-import { configSmtpPublica, prepararConfigSmtp, testarSmtp } from './email.js';
 import { conferirInstanciaUnica, configWhatsPublica, contaWhats, prepararConfigWhats, testarWhatsApp, conectarWhatsApp, desconectarWhatsApp, ativarRecebimento } from './whatsapp.js';
 import { automaticasPublica, prepararAutomaticas } from './automaticas.js';
 import { chatbotPublica, prepararChatbot, testarChatbot } from './chatbot.js';
@@ -14,16 +13,14 @@ import { configProspeccaoPublica, prepararConfigProspeccao } from './prospeccao.
  * Configurações da empresa (tabela config).
  *
  * Cada linha é `empresa_id + grupo + chave = valor`, com o valor em JSON. A tela de
- * Configurações tem uma aba por grupo: "pessoas" (campos_personalizados), "email" (smtp),
+ * Configurações tem uma aba por grupo: "pessoas" (campos_personalizados),
  * "whatsapp" (provedor), "vendas" (retorno_envio), "assinatura" (d4sign), "prospeccao" (google) e "contratos" (modelo). Senhas e tokens são gravados cifrados e nunca voltam para o
- * navegador (server/email.ts, server/whatsapp.ts).
+ * navegador (server/whatsapp.ts). O e-mail (SMTP) é gravado no BM-Master (server/email.ts).
  */
 
 /** Grupos e chaves aceitos: o que não está aqui não entra no banco */
 const CHAVES: Record<string, string[]> = {
   pessoas: ['campos_personalizados'],
-  // smtp = conta comercial (propostas, pedidos, contratos, campanhas); smtp_suporte = conta do suporte (pesquisa de satisfação, chamados)
-  email: ['smtp', 'smtp_suporte'],
   // campanhas: outro número só para as campanhas (mesma estrutura da provedor)
   // jornada_campanhas: a Automação de quem responde no WhatsApp das campanhas (mesma estrutura da jornada)
   whatsapp: ['provedor', 'campanhas', 'automaticas', 'chatbot', 'jornada', 'jornada_campanhas', 'pesquisa'],
@@ -39,8 +36,6 @@ const CHAVES: Record<string, string[]> = {
  * cifrados, devolvidos sem o segredo).
  */
 const COM_SEGREDO: Record<string, { preparar: (valor: any, anterior: any) => any; publica: (valor: any) => any }> = {
-  'email.smtp': { preparar: prepararConfigSmtp, publica: configSmtpPublica },
-  'email.smtp_suporte': { preparar: prepararConfigSmtp, publica: configSmtpPublica },
   'whatsapp.provedor': { preparar: prepararConfigWhats, publica: configWhatsPublica },
   'whatsapp.campanhas': { preparar: prepararConfigWhats, publica: configWhatsPublica },
   'whatsapp.automaticas': { preparar: prepararAutomaticas, publica: automaticasPublica },
@@ -135,17 +130,6 @@ export function createConfigRouter(): Router {
           texto,
         ]);
       }
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(err.status || 400).json({ error: err.message });
-    }
-  });
-
-  /** Conecta e autentica no SMTP gravado (conta comercial ou do suporte), sem enviar e-mail */
-  router.post('/config/email/:chave/testar', async (req: Request, res: Response) => {
-    try {
-      somenteAdmin(res);
-      await testarSmtp(String(res.locals.empresaId), req.params.chave === 'smtp_suporte' ? 'suporte' : 'comercial');
       res.json({ success: true });
     } catch (err: any) {
       res.status(err.status || 400).json({ error: err.message });

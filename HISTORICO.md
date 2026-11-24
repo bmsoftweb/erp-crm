@@ -2,6 +2,10 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.225 — 2026-11-24
+
+- E-mail: o envio usa as contas da empresa gravadas no BM-Master (`sys_empresas_smtp`): CRM comercial para propostas, pedidos e campanhas, CRM suporte para chamados, com reserva na Padrão. Sai a aba E-mail das Configurações e o SMTP do `.env`.
+
 ## 0.0.224 — 2026-11-23
 
 - Vigia do WhatsApp: não conta os feriados nacionais nem o almoço (11h30 às 13h30) nas 2 h de silêncio, e tenta de novo antes de avisar falha pontual da Evolution.
