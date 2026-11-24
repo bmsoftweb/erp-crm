@@ -2,6 +2,12 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.224 — 2026-11-23
+
+- Vigia do WhatsApp: não conta os feriados nacionais nem o almoço (11h30 às 13h30) nas 2 h de silêncio, e tenta de novo antes de avisar falha pontual da Evolution.
+- Jornada: quando a IA passa para a equipe, o motivo fica escrito na conversa.
+- Título padrão "BM-CRM" (era "ERP CRM"); mensagens citam o "BM-Master".
+
 ## 0.0.223 — 2026-11-23
 
 - WhatsApp: o círculo da conversa agora abre a lista de clientes para trocar o cliente do número. O número sai do cadastro errado e vai para o escolhido (no WhatsApp dele, ou como contato se ele já tiver outro WhatsApp), e a conversa vai junto.
