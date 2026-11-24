@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.226 — 2026-11-24
+
+- Campanhas: critério "Público" (pessoas, leads da Prospecção ou os dois). Nos leads valem segmento, UF, cidade, dias desde o cadastro e os contatos; regra só de pessoa deixa os leads de fora. Disparo do lead sai com `lead_id`, e o SAIR também descadastra o lead.
+- Segmentos: detalhe "Leads do Segmento".
+
 ## 0.0.225 — 2026-11-24
 
 - E-mail: o envio usa as contas da empresa gravadas no BM-Master (`sys_empresas_smtp`): CRM comercial para propostas, pedidos e campanhas, CRM suporte para chamados, com reserva na Padrão. Sai a aba E-mail das Configurações e o SMTP do `.env`.

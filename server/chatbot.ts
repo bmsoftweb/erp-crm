@@ -1337,24 +1337,30 @@ async function ultimaRecebida(empresaId: number, telefone: string): Promise<numb
  */
 async function tratarDescadastro(nova: MensagemNova): Promise<boolean> {
   if ((await contaDaConversa(nova.empresaId, nova.telefone)) !== 'campanhas') return false;
-  const [m] = await pool.query<any[]>('SELECT tipo, texto, pessoa_id FROM crm_whatsapp_mensagens WHERE id = ?', [nova.id]);
+  const [m] = await pool.query<any[]>('SELECT tipo, texto, pessoa_id, lead_id FROM crm_whatsapp_mensagens WHERE id = ?', [nova.id]);
   if (m[0]?.tipo !== 'texto' || !PEDIU_SAIR.test(String(m[0].texto ?? ''))) return false;
   const campanha = await campanhaDaConversa(nova.empresaId, nova.telefone);
-  const pessoas = [...new Set([m[0].pessoa_id, campanha?.pessoa_id].filter(Boolean))];
-  if (pessoas.length) {
-    await pool.query('UPDATE cad_pessoas SET nao_receber_campanhas = 1 WHERE id IN (?)', [pessoas]);
+  // Pessoa (de todas as filiais) ou lead da Prospecção da filial (campanha com público de leads)
+  for (const [marcar, campo, ids] of [
+    ['UPDATE cad_pessoas SET nao_receber_campanhas = 1 WHERE id IN (?)', 'pessoa_id', [m[0].pessoa_id, campanha?.pessoa_id]],
+    ['UPDATE crm_leads SET nao_receber_campanhas = 1 WHERE empresa_id = ? AND id IN (?)', 'lead_id', [m[0].lead_id, campanha?.lead_id]],
+  ] as const) {
+    const lista = [...new Set(ids.filter(Boolean))];
+    if (!lista.length) continue;
+    await pool.query(marcar, campo === 'lead_id' ? [nova.empresaId, lista] : [lista]);
     await pool.query(
       `UPDATE crm_campanha_disparos d JOIN crm_campanhas c ON c.id = d.campanha_id SET d.situacao = 'cancelado', d.erro = 'Pediu para não receber campanhas'
-        WHERE c.empresa_id = ? AND d.pessoa_id IN (?) AND d.situacao = 'pendente'`,
-      [nova.empresaId, pessoas],
+        WHERE c.empresa_id = ? AND d.${campo} IN (?) AND d.situacao = 'pendente'`,
+      [nova.empresaId, lista],
     );
   }
+  const dono = { pessoa_id: m[0].pessoa_id ?? campanha?.pessoa_id ?? null, lead_id: m[0].lead_id ?? campanha?.lead_id ?? null };
   await marcarEvento(nova.empresaId, nova.telefone, 'Pediu para não receber mais campanhas', null);
   await enviarWhatsApp(
     nova.empresaId,
     nova.telefone,
     'Pronto! Você não vai mais receber nossas campanhas por aqui. Se precisar de alguma coisa, é só chamar.',
-    { pessoa_id: pessoas[0] ?? null },
+    dono,
     undefined,
     null,
     await contaDaConversa(nova.empresaId, nova.telefone),
