@@ -526,7 +526,7 @@ export const CrudView: React.FC<CrudViewProps> = ({
    * Painel de baixo (ficha ou grades de detalhe) recolhido: a tela abre com ele recolhido, e ele só abre quando o
    * usuário clica; aberto ou fechado, fica assim ao escolher outros registros
    */
-  const [fichaRecolhida, setFichaRecolhida] = useState(true);
+  const [fichaRecolhida, setFichaRecolhida] = useState(!resource.detalheAberto);
   const trocarVisao = (v: 'lista' | VisaoCalendario) => {
     setVisao(v);
     if (v !== 'lista') setFichaRecolhida(true);
@@ -585,6 +585,7 @@ export const CrudView: React.FC<CrudViewProps> = ({
     setMostrar(lerLocal('mostrar', '1') !== '0');
     setBuscaAvancadaAberta(false);
     setVisao(lerVisao());
+    if (resource.detalheAberto) setFichaRecolhida(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resource.name, resource.defaultSort.field, resource.defaultSort.dir, resource.filtroRapidoPadrao, filtroPadrao]);
 

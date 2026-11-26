@@ -90,6 +90,8 @@ export interface ResourceDef {
   canUpdate: boolean;
   canDelete: boolean;
   details?: DetailDef[];
+  /** A tela já abre com o painel das grades de detalhe expandido (ex.: etapas dos funis) */
+  detalheAberto?: boolean;
   /** Ao clicar numa linha, mostra embaixo a ficha com todos os campos (textos longos por inteiro) */
   ficha?: boolean;
   /** Atividades: além da lista, visões Semana e Mês (data_vencimento, hora_vencimento, duracao, assunto) */

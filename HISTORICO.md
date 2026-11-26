@@ -2,6 +2,11 @@
 
 Mais recente primeiro. PATCH a cada envio ao GitHub; MAJOR/MINOR só quando pedido.
 
+## 0.0.228 — 2026-11-25
+
+- Funis de Vendas: a tela já abre com as Etapas expandidas (`detalheAberto` no recurso).
+- Grades de detalhe: splitter na borda de cima do painel para mudar a altura; fica guardada por tela neste navegador.
+
 ## 0.0.227 — 2026-11-24
 
 - Campanhas: critérios ligados por E ou OU (o E vale antes do OU). No lead, regra só de pessoa conta como "não atende" só naquela condição. "Adicionar critério" não começa mais pelo "Público".

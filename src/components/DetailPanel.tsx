@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Inbox, X, ExternalLink, ChevronDown, ChevronUp, Plus, Pencil, Trash2, Lock } from 'lucide-react';
 import { DetailDef, OpcaoRef, RegistroCrud, ResourceDef } from '../types';
 import { formatCurrencyBRL } from '../utils/formatters';
@@ -64,6 +64,44 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   /** Painel editável (detail.editavel): registro no formulário (null = inclusão) e o que está para excluir */
   const [editando, setEditando] = useState<{ record: RegistroCrud | null } | null>(null);
   const [excluindo, setExcluindo] = useState<RegistroCrud | null>(null);
+
+  /** Altura do painel no splitter (px; null = 38% da tela), lembrada neste navegador para cada tela */
+  const chaveAltura = `crmweb.alturaDetalhe.${parent.name}`;
+  const [altura, setAltura] = useState<number | null>(() => {
+    try {
+      return Number(localStorage.getItem(chaveAltura)) || null;
+    } catch {
+      return null;
+    }
+  });
+  const painelRef = useRef<HTMLDivElement>(null);
+  const arrastarSplitter = (e: React.PointerEvent) => {
+    const painel = painelRef.current;
+    if (!painel) return;
+    e.preventDefault();
+    const yInicial = e.clientY;
+    const hInicial = painel.offsetHeight;
+    // Lista e painel dividem a tela: cada um fica com pelo menos 120 px
+    const maximo = Math.max(120, (painel.parentElement?.clientHeight ?? window.innerHeight) - 120);
+    let final = hInicial;
+    const mover = (ev: PointerEvent) => {
+      final = Math.min(maximo, Math.max(120, hInicial + yInicial - ev.clientY));
+      setAltura(final);
+    };
+    const soltar = () => {
+      window.removeEventListener('pointermove', mover);
+      window.removeEventListener('pointerup', soltar);
+      document.body.style.cursor = '';
+      try {
+        localStorage.setItem(chaveAltura, String(Math.round(final)));
+      } catch {
+        // sem armazenamento: vale só até recarregar
+      }
+    };
+    document.body.style.cursor = 'row-resize';
+    window.addEventListener('pointermove', mover);
+    window.addEventListener('pointerup', soltar);
+  };
 
   const detail = details[Math.min(activeDetail, details.length - 1)];
   const childResource = useMemo(
@@ -194,10 +232,20 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
 
   return (
     <div
-      className={`shrink-0 border-t-2 border-blue-500/60 dark:border-blue-600/60 bg-white dark:bg-stone-900 flex flex-col ${
-        isCollapsed ? '' : 'h-[38%] min-h-[200px]'
+      ref={painelRef}
+      style={!isCollapsed && altura ? { height: altura } : undefined}
+      className={`relative shrink-0 border-t-2 border-blue-500/60 dark:border-blue-600/60 bg-white dark:bg-stone-900 flex flex-col ${
+        isCollapsed ? '' : altura ? 'min-h-[120px]' : 'h-[38%] min-h-[200px]'
       }`}
     >
+      {/* Splitter: arrastar a borda de cima muda a altura do painel (e da lista acima) */}
+      {!isCollapsed && (
+        <div
+          onPointerDown={arrastarSplitter}
+          title="Arraste para mudar a altura do painel"
+          className="absolute -top-1.5 left-0 right-0 h-2.5 z-20 cursor-row-resize hover:bg-blue-400/40 transition-colors"
+        />
+      )}
       {/* Cabeçalho do painel: abas das grades filhas + identificação do pai */}
       <div className="flex items-center justify-between gap-3 px-3 border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950/60 shrink-0">
         <div className="flex items-stretch min-w-0 overflow-x-auto overflow-y-hidden">

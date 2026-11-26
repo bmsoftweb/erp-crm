@@ -152,6 +152,8 @@ export interface ResourceDef {
   /** Excluir só preenche esta coluna com NOW() (o scopeSql deve esconder os excluídos) */
   exclusaoLogica?: string;
   details?: DetailDef[];
+  /** A tela já abre com o painel das grades de detalhe expandido (ex.: etapas dos funis) */
+  detalheAberto?: boolean;
   /** Ao clicar numa linha, mostra embaixo a ficha com todos os campos (textos longos por inteiro) */
   ficha?: boolean;
   /** Atividades: além da lista, visões Semana e Mês (data_vencimento, hora_vencimento, duracao, assunto) */
@@ -1492,6 +1494,7 @@ export const RESOURCES: ResourceDef[] = [
     canDelete: true,
     // Etapas não têm menu próprio: são mantidas aqui, no detalhe do funil
     details: [{ resource: 'etapas', foreignKey: 'funil_id', label: 'Etapas', editavel: true }],
+    detalheAberto: true,
     fields: [
       ID,
       { name: 'nome', label: 'Nome', type: 'text', required: true, listed: true, searchable: true, maxLength: 100 },
